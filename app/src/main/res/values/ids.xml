@@ -1,0 +1,5 @@
+<resources>
+    <item name="open_diagnostics" type="id" />
+    <item name="query_all" type="id" />
+    <item name="diagnostics_results" type="id" />
+</resources>
