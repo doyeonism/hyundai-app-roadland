@@ -1,7 +1,8 @@
 import "server-only";
-import { createSeed, BUILDING_TYPES, type DummyState } from "./dummy/seed";
+import { latLngToCell } from "h3-js";
+import { createSeed, BUILDING_TYPES, H3_RES, type DummyState } from "./dummy/seed";
 import { stageForLevel, topAxes, xpToNext, XP_PER_FOOD } from "./rules";
-import type { CosmeticItem, RankRow } from "./types";
+import type { Axis, CosmeticItem, RankRow, Trip } from "./types";
 
 // 더미 백엔드. 화면은 이 파일의 함수만 부른다.
 // 실제 서버가 생기면 함수 안을 fetch 호출로 바꾸고 시그니처는 그대로 둔다.
@@ -176,4 +177,127 @@ export async function resolveShareCode(code: string) {
 export async function linkVehicle(code: string) {
   // 실제로는 차 화면에 뜬 6자리 코드로 계정과 차량을 묶는다.
   return /^\d{6}$/.test(code) ? { vehicleId: db().bungbung.vehicleId } : null;
+}
+
+// ---- 차량 앱이 부르는 함수 ----
+
+const DAILY_FOOD_CAP = 40;
+
+export interface TripInput {
+  startedAt: string;
+  endedAt: string;
+  km: number;
+  hardBrakes: number;
+  passengers: number;
+  /** [위도, 경도]. 실제 서버에서는 차 안에서 타일 ID로 바꿔 보내고 원본 좌표는 받지 않는다. */
+  points: [number, number][];
+}
+
+function clamp(v: number) {
+  return Math.max(0, Math.min(100, Math.round(v)));
+}
+
+/** 주차(P)로 주행이 끝나면 차량 앱이 보내는 요약을 정산한다. */
+export async function recordTrip(input: TripInput): Promise<Trip> {
+  const s = db();
+  const b = s.bungbung;
+  const km = Math.max(0, Math.round(input.km * 10) / 10);
+  const hardBrakes = Math.max(0, Math.floor(input.hardBrakes));
+
+  const todayFood = (await getToday()).food;
+  const rawFood = Math.max(0, Math.floor(km) - hardBrakes);
+  const foodEarned = Math.max(0, Math.min(rawFood, DAILY_FOOD_CAP - todayFood));
+  const foodCapReached = todayFood + rawFood >= DAILY_FOOD_CAP;
+
+  let newTiles = 0;
+  const smoothBonus = hardBrakes === 0 ? 2 : 1;
+  for (const h3 of new Set(input.points.map(([lat, lng]) => latLngToCell(lat, lng, H3_RES)))) {
+    const t = (s.tiles[h3] ??= { h3, owner: { kind: "none" }, affection: 0, protectedHome: false, building: null, lastVisit: null, partner: null });
+    if (t.owner.kind === "me") {
+      t.affection = clamp(t.affection + 5 * smoothBonus);
+    } else if (t.owner.kind === "none") {
+      t.owner = { kind: "me" };
+      t.affection = 10 * smoothBonus;
+      newTiles++;
+    } else if (!t.protectedHome) {
+      t.affection -= 10 * smoothBonus;
+      if (t.affection <= 0) {
+        t.owner = { kind: "me" };
+        t.affection = 10;
+        newTiles++;
+      }
+    }
+    t.lastVisit = input.endedAt;
+  }
+
+  const gaugeGained = Math.min(100 - s.wallet.buildGauge, foodEarned * 3 + (hardBrakes === 0 ? 10 : 0));
+  s.wallet.food += foodEarned;
+  s.wallet.buildGauge += gaugeGained;
+
+  const nudge: Partial<Record<Axis, number>> = {
+    smooth: hardBrakes === 0 ? 2 : -3 * hardBrakes,
+    explore: newTiles,
+    together: input.passengers > 0 ? 3 : 0,
+    safe: hardBrakes === 0 ? 1 : -1,
+  };
+  for (const [axis, d] of Object.entries(nudge) as [Axis, number][]) b.axes[axis] = clamp(b.axes[axis] + d);
+  b.mood = clamp(b.mood + (hardBrakes === 0 ? 5 : -5 * hardBrakes));
+
+  const completed: string[] = [];
+  for (const m of s.missions) {
+    if (m.progress >= m.goal) continue;
+    if (m.id === "m_brake0" && hardBrakes === 0 && km >= 1) m.progress = m.goal;
+    if (m.id === "m_newtown") m.progress = Math.min(m.goal, m.progress + newTiles);
+    if (m.id === "m_passenger" && input.passengers > 0) m.progress = m.goal;
+    if (m.progress >= m.goal) completed.push(m.id);
+  }
+
+  const line =
+    newTiles > 0 && hardBrakes === 0
+      ? `새 땅 ${newTiles}칸! 급정거 한 번도 없었어!`
+      : newTiles > 0
+        ? `새 땅 ${newTiles}칸! 다음엔 더 부드럽게 가 보자.`
+        : hardBrakes === 0
+          ? "부드러운 주행이었어. 애정도가 올랐어!"
+          : `급정거 ${hardBrakes}번… 조금 놀랐어.`;
+
+  const trip: Trip = {
+    id: `t_${Date.now().toString(36)}`,
+    endedAt: input.endedAt,
+    // 주소 변환 전까지는 도착 시각으로 주행을 구분한다.
+    from: "주행",
+    to: `${new Date(input.endedAt).toLocaleTimeString("ko-KR", { hour: "numeric", minute: "2-digit", timeZone: "Asia/Seoul" })} 도착`,
+    km,
+    hardBrakes,
+    foodEarned,
+    newTiles,
+    passengers: input.passengers,
+    gaugeGained,
+    foodCapReached,
+    completedMissionIds: completed,
+    line,
+  };
+  s.trips.push(trip);
+  return trip;
+}
+
+/** 정차 중 미니게임 결과. 목욕은 기분, 달리기는 코인. */
+export async function recordMinigame(game: "bath" | "run", score: number) {
+  const s = db();
+  const n = Math.max(0, Math.min(Math.floor(score), 200));
+  if (game === "bath") {
+    const mood = Math.min(30, n * 5);
+    s.bungbung.mood = clamp(s.bungbung.mood + mood);
+    return { mood, coins: 0 };
+  }
+  const coins = Math.floor(n / 2);
+  s.wallet.coins += coins;
+  return { mood: 0, coins };
+}
+
+/** 차량 앱 첫 화면에 필요한 것을 한 번에. */
+export async function getCarHome() {
+  const [b, wallet, missions, today] = await Promise.all([getBungbung(), getWallet(), getMissions(), getToday()]);
+  const [main] = topAxes(b.axes);
+  return { bungbung: { ...b, mainAxis: main }, wallet, missions, latestTrip: today.trips[0] ?? null, today: { km: today.km, newTiles: today.newTiles, food: today.food } };
 }
