@@ -1,63 +1,87 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { feed, getBungbung, getCarHome, getDex, getWallet } from "./api";
-import { GRADES, MAX_LEVEL } from "./grades";
-import { EVOLVED_STAGES, xpToNext } from "./rules";
+import { advanceClock, buyTile, collectAll, getHome, getRecords, getTile, GameError, listTiles, now, recordTrip, resetState, upgradeTile } from "./api";
+import { RULES } from "./rules";
+import type { TripInput } from "./types";
 
-const g = globalThis as unknown as { __bbState?: unknown };
-beforeEach(() => {
-  delete g.__bbState;
-});
+beforeEach(() => resetState());
 
-async function setFood(n: number) {
-  (await getWallet()).food = n;
-}
+const drive = (ids: string[], o: Partial<TripInput> = {}) => {
+  const end = now();
+  return recordTrip({
+    startedAt: new Date(end.getTime() - 20 * 60_000).toISOString(),
+    endedAt: end.toISOString(),
+    km: 10,
+    safetyScore: 100,
+    hardBrakes: 0,
+    warnings: 0,
+    laneChanges: 0,
+    signaledLaneChanges: 0,
+    tiles: ids.map((id) => ({ id, hardBrake: false, warning: false, assisted: false })),
+    ...o,
+  });
+};
 
-describe("feed", () => {
-  it("여러 단계를 한 번에 넘어도 지나간 단계의 도감이 모두 열린다", async () => {
-    const b = await getBungbung();
-    b.level = 1;
-    b.xp = 0;
-    b.xpToNext = xpToNext(1);
-    b.stage = 1;
-    b.form = null;
-    await setFood(100_000);
-    const r = await feed(100_000);
-    expect(r.evolved).toBe(true);
-    const { main, sub } = b.form!;
-    const opened = (await getDex()).filter((f) => f.unlocked).map((f) => f.id);
-    expect(opened.sort()).toEqual(EVOLVED_STAGES.map((s) => `${main}-${sub}-${s}`).sort());
+describe("주행 → 땅 → 방치 수익", () => {
+  it("처음 지나간 타일은 살 수 있게 되고, 크레딧이 쌓인다", () => {
+    const before = getHome().credits;
+    const t = drive(["900:1", "900:2"]);
+    expect(t.newTiles).toBe(2);
+    expect(getHome().credits).toBe(before + 2 * RULES.tileCredit);
+    expect(getTile("900:1")?.buyCost).not.toBeNull();
   });
 
-  it("진화 뒤 운전 습관이 바뀌어도 모습은 다음 진화까지 그대로다", async () => {
-    const b = await getBungbung();
-    b.xp = b.xpToNext - 5;
-    b.level = GRADES[1].fromLevel - 1;
-    await setFood(1);
-    await feed(1);
-    const form = { ...b.form! };
-    b.axes[form.main] = 0;
-    const home = await getCarHome();
-    expect(home.bungbung.mainAxis).toBe(form.main);
-    const dexForm = (await getDex()).find((f) => f.id === `${form.main}-${form.sub}-${b.stage}`);
-    expect(dexForm?.unlocked).toBe(true);
+  it("지나간 적 없는 땅은 살 수 없다", () => {
+    expect(() => buyTile("999:999")).toThrow(GameError);
   });
 
-  it("최고 레벨에 닿을 만큼만 먹이를 쓰고 나머지는 남긴다", async () => {
-    await setFood(1_000_000);
-    const r = await feed(1_000_000);
-    const b = await getBungbung();
-    expect(b.level).toBe(MAX_LEVEL);
-    expect(r.maxed).toBe(true);
-    const left = (await getWallet()).food;
-    expect(left).toBeGreaterThan(0);
-    expect(await feed(left)).toEqual({ evolved: false, maxed: true });
-    expect((await getWallet()).food).toBe(left);
+  it("땅을 사고 올리면 시간이 지나 수익이 생기고, 한 번에 받는다", () => {
+    drive(["900:1"]);
+    buyTile("900:1");
+    upgradeTile("900:1");
+    expect(getTile("900:1")?.level).toBe(2);
+    collectAll();
+    advanceClock(3);
+    const pending = getHome().pendingIncome;
+    expect(pending).toBeGreaterThan(0);
+    const credits = getHome().credits;
+    expect(collectAll()).toBe(pending);
+    expect(getHome().credits).toBe(credits + pending);
+    expect(getHome().pendingIncome).toBe(0);
   });
 
-  it("차량 앱에 단계 이름과 크기를 보낸다", async () => {
-    const home = await getCarHome();
-    expect(home.bungbung.stageLabel).toBe(GRADES[home.bungbung.stage - 1].label);
-    expect(home.bungbung.growth).toBeGreaterThanOrEqual(0);
-    expect(home.bungbung.growth).toBeLessThanOrEqual(1);
+  it("크레딧이 모자라면 살 수 없다", () => {
+    drive(["900:1"]);
+    const owned = listTiles().filter((t) => t.owned).length;
+    // 크레딧을 다 써 버린다
+    while (getHome().credits >= RULES.buyBaseCost + RULES.buyCostPerOwned * owned) {
+      const free = listTiles().find((t) => t.buyCost !== null && t.buyCost <= getHome().credits);
+      if (!free) break;
+      buyTile(free.id);
+    }
+    const target = listTiles().find((t) => t.buyCost !== null)!;
+    expect(() => buyTile(target.id)).toThrow("크레딧이 부족해요");
+  });
+
+  it("하루 주행 크레딧은 상한까지만", () => {
+    const many = Array.from({ length: 60 }, (_, i) => `800:${i}`);
+    drive(many, { km: 10 });
+    const t = drive(Array.from({ length: 60 }, (_, i) => `801:${i}`), { km: 10 });
+    expect(t.capReached).toBe(true);
+    expect(getHome().today.driveCredits).toBe(RULES.dailyDriveCap);
+  });
+
+  it("검증에 실패한 기록은 보상도 땅도 없다", () => {
+    const t = drive(["700:1"], { km: 500 });
+    expect(t.rejected).toBe(true);
+    expect(t.credits).toBe(0);
+    expect(getTile("700:1")).toBeNull();
+  });
+
+  it("안전 점수 90 이상이 이어지면 연속 기록, 아니면 끊긴다", () => {
+    const start = getRecords().safeStreak;
+    drive(["1:1"], { safetyScore: 95 });
+    expect(getRecords().safeStreak).toBe(start + 1);
+    drive(["1:2"], { safetyScore: 60, hardBrakes: 2 });
+    expect(getRecords().safeStreak).toBe(0);
   });
 });

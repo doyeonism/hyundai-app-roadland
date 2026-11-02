@@ -2,8 +2,8 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "붕붕이",
-  description: "내 차가 곧 캐릭터인 키우기 게임의 휴대폰 동반 웹",
+  title: "로드랜드",
+  description: "로드랜드 차량 앱의 더미 서버",
 };
 
 export const viewport: Viewport = { width: "device-width", initialScale: 1 };

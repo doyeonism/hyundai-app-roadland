@@ -1,6 +1,5 @@
 package com.example.myapplication
 
-import android.graphics.Color
 import android.os.Handler
 import android.os.Looper
 import org.json.JSONArray
@@ -9,30 +8,32 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.Executors
 
-data class Mission(val id: String, val text: String, val progress: Int, val goal: Int, val reward: String) {
-    val done get() = progress >= goal
-}
-
 data class Trip(
-    val id: String, val km: Double, val hardBrakes: Int, val foodEarned: Int, val newTiles: Int,
-    val passengers: Int, val gaugeGained: Int, val foodCapReached: Boolean, val line: String,
+    val id: String, val km: Double, val safetyScore: Int, val hardBrakes: Int, val warnings: Int,
+    val laneChanges: Int, val signaledLaneChanges: Int, val tiles: List<TileSegment>, val newTiles: Int,
+    val credits: Int, val clean: Int, val assistBonus: Int, val mannerBonus: Int, val excluded: Int,
+    val capReached: Boolean, val rejected: Boolean,
 )
 
-data class Bung(
-    val name: String, val level: Int, val xp: Int, val xpToNext: Int,
-    /** 진화 전이면 null. 단계 수·이름·크기는 서버(lib/grades.ts)가 정해 보낸다. */
-    val mainAxis: String?, val formName: String, val stageLabel: String, val growth: Float, val maxed: Boolean,
-    val color: Int, val hat: String?, val deco: String?, val mood: Int, val fullness: Int,
-)
-
-data class Wallet(val food: Int, val coins: Int, val gems: Int, val buildGauge: Int)
+data class Today(val trips: Int, val km: Double, val tilesPassed: Int, val driveCredits: Int, val driveCap: Int)
 
 data class Home(
-    val bung: Bung, val wallet: Wallet, val missions: List<Mission>, val latestTrip: Trip?,
-    val todayKm: Double, val todayTiles: Int, val todayFood: Int,
+    val credits: Int, val pendingIncome: Int, val incomePerHour: Int, val idleCapHours: Int,
+    val ownedTiles: Int, val buyableTiles: Int, val today: Today, val latestTrip: Trip?, val safeStreak: Int,
 )
 
-/** 정산·키우기 서버. 지금은 web/의 더미 백엔드(`/api/car/...`)를 부른다. */
+data class LandTile(
+    val id: String, val level: Int, val owned: Boolean, val visited: Boolean, val homeRoute: Boolean,
+    val incomePerHour: Int, val pending: Int, val buyCost: Int?, val upgradeCost: Int?, val special: String?,
+)
+
+data class Special(val name: String, val collected: Boolean)
+
+data class Records(
+    val safeStreak: Int, val bestSafeStreak: Int, val recentScores: List<Int>, val ownedTiles: Int, val specials: List<Special>,
+)
+
+/** 영토 서버. 지금은 web/의 더미 백엔드(`/api/car/...`)를 부른다. */
 object CarApi {
     /** 에뮬레이터에서 호스트 PC의 dev 서버. 실차·실서버로 갈 때 바꾼다. */
     const val BASE = "http://10.0.2.2:3100/api/car"
@@ -41,28 +42,43 @@ object CarApi {
     private val io = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
 
-    fun home(callback: (Result<Home>) -> Unit) = async(callback) { parseHome(request("GET", "/home", null)) }
+    fun home(callback: (Result<Home>) -> Unit) = async(callback) { homeBlocking() }
 
-    fun feed(amount: Int, callback: (Result<Pair<Boolean, Home>>) -> Unit) = async(callback) {
-        val res = request("POST", "/feed", JSONObject().put("amount", amount))
-        res.getBoolean("evolved") to parseHome(res.getJSONObject("home"))
+    fun homeBlocking() = parseHome(request("GET", "/home", null))
+
+    fun territory(callback: (Result<List<LandTile>>) -> Unit) = async(callback) {
+        val a = request("GET", "/territory", null).getJSONArray("tiles")
+        (0 until a.length()).map { parseTile(a.getJSONObject(it)) }
     }
 
-    /** 돌려주는 값: (기분 증가, 코인 증가). */
-    fun minigame(game: String, score: Int, callback: (Result<Pair<Int, Int>>) -> Unit) = async(callback) {
-        val res = request("POST", "/minigames", JSONObject().put("game", game).put("score", score))
-        res.getInt("mood") to res.getInt("coins")
+    fun buy(id: String, callback: (Result<LandTile>) -> Unit) = async(callback) { parseTile(request("POST", "/tiles/$id/buy", null)) }
+
+    fun upgrade(id: String, callback: (Result<LandTile>) -> Unit) = async(callback) { parseTile(request("POST", "/tiles/$id/upgrade", null)) }
+
+    /** 받은 방치 수익. */
+    fun collect(callback: (Result<Int>) -> Unit) = async(callback) { request("POST", "/collect", null).getInt("collected") }
+
+    fun records(callback: (Result<Records>) -> Unit) = async(callback) {
+        val o = request("GET", "/records", null)
+        val scores = o.getJSONArray("recentScores")
+        val specials = o.getJSONArray("specials")
+        Records(
+            o.getInt("safeStreak"), o.getInt("bestSafeStreak"), (0 until scores.length()).map { scores.getInt(it) }, o.getInt("ownedTiles"),
+            (0 until specials.length()).map { specials.getJSONObject(it).run { Special(getString("name"), getBoolean("collected")) } },
+        )
     }
 
-    /** 주행 수집 서비스의 작업 스레드에서 부른다. */
-    fun postTripBlocking(summary: TripSummary): Trip {
-        val points = JSONArray().apply { summary.points.forEach { put(JSONArray().put(it.first).put(it.second)) } }
-        val body = JSONObject()
-            .put("startedAt", iso(summary.startedAt)).put("endedAt", iso(summary.endedAt))
-            .put("km", summary.km).put("hardBrakes", summary.hardBrakes)
-            .put("passengers", summary.passengers).put("points", points)
-        return parseTrip(request("POST", "/trips", body))
-    }
+    /** 수집 서비스의 작업 스레드에서 부른다. 큐에 저장해 둔 JSON을 그대로 보낸다. */
+    fun postTripBlocking(body: JSONObject): Trip = parseTrip(request("POST", "/trips", body))
+
+    fun tripBody(s: TripSummary): JSONObject = JSONObject()
+        .put("startedAt", iso(s.startedAt)).put("endedAt", iso(s.endedAt))
+        .put("km", s.km).put("safetyScore", s.safetyScore).put("hardBrakes", s.hardBrakes).put("warnings", s.warnings)
+        .put("laneChanges", s.laneChanges).put("signaledLaneChanges", s.signaledLaneChanges)
+        .put("tiles", JSONArray().apply { s.tiles.forEach { put(segmentJson(it)) } })
+
+    /** 서버가 400으로 돌려준 안내 문구. */
+    class GameException(message: String) : Exception(message)
 
     private fun <T> async(callback: (Result<T>) -> Unit, work: () -> T) {
         io.execute {
@@ -79,13 +95,14 @@ object CarApi {
             conn.readTimeout = 8000
             conn.setRequestProperty("x-vehicle-id", VEHICLE_ID)
             conn.setRequestProperty("Accept", "application/json")
-            if (body != null) {
+            if (body != null || method == "POST") {
                 conn.doOutput = true
                 conn.setRequestProperty("Content-Type", "application/json")
-                conn.outputStream.use { it.write(body.toString().toByteArray()) }
+                conn.outputStream.use { it.write((body ?: JSONObject()).toString().toByteArray()) }
             }
             val code = conn.responseCode
             val text = (if (code in 200..299) conn.inputStream else conn.errorStream)?.bufferedReader()?.use { it.readText() }.orEmpty()
+            if (code == 400) throw GameException(runCatching { JSONObject(text).getString("error") }.getOrDefault("요청을 처리하지 못했어요"))
             if (code !in 200..299) throw java.io.IOException("HTTP $code $text")
             return JSONObject(text)
         } finally {
@@ -95,35 +112,41 @@ object CarApi {
 
     private fun iso(millis: Long) = java.time.Instant.ofEpochMilli(millis).toString()
 
+    private fun segmentJson(t: TileSegment) =
+        JSONObject().put("id", t.id).put("hardBrake", t.hardBrake).put("warning", t.warning).put("assisted", t.assisted)
+
     private fun parseHome(o: JSONObject): Home {
-        val b = o.getJSONObject("bungbung")
-        val eq = b.getJSONObject("equipped")
-        val w = o.getJSONObject("wallet")
-        val m = o.getJSONArray("missions")
         val t = o.getJSONObject("today")
         return Home(
-            bung = Bung(
-                name = b.getString("name"), level = b.getInt("level"), xp = b.getInt("xp"), xpToNext = b.getInt("xpToNext"),
-                mainAxis = b.optStringOrNull("mainAxis"), formName = b.getString("formName"), stageLabel = b.getString("stageLabel"),
-                growth = b.getDouble("growth").toFloat(), maxed = b.getBoolean("maxed"),
-                color = runCatching { Color.parseColor(eq.getString("color")) }.getOrDefault(Palette.ACCENT),
-                hat = eq.optStringOrNull("hat"), deco = eq.optStringOrNull("deco"),
-                mood = b.getInt("mood"), fullness = b.getInt("fullness"),
-            ),
-            wallet = Wallet(w.getInt("food"), w.getInt("coins"), w.getInt("gems"), w.getInt("buildGauge")),
-            missions = (0 until m.length()).map { i ->
-                m.getJSONObject(i).run { Mission(getString("id"), getString("text"), getInt("progress"), getInt("goal"), getString("reward")) }
-            },
+            credits = o.getInt("credits"), pendingIncome = o.getInt("pendingIncome"), incomePerHour = o.getInt("incomePerHour"),
+            idleCapHours = o.getInt("idleCapHours"), ownedTiles = o.getInt("ownedTiles"), buyableTiles = o.getInt("buyableTiles"),
+            today = Today(t.getInt("trips"), t.getDouble("km"), t.getInt("tilesPassed"), t.getInt("driveCredits"), t.getInt("driveCap")),
             latestTrip = if (o.isNull("latestTrip")) null else parseTrip(o.getJSONObject("latestTrip")),
-            todayKm = t.getDouble("km"), todayTiles = t.getInt("newTiles"), todayFood = t.getInt("food"),
+            safeStreak = o.getInt("safeStreak"),
         )
     }
 
-    private fun parseTrip(o: JSONObject) = Trip(
-        id = o.getString("id"), km = o.getDouble("km"), hardBrakes = o.getInt("hardBrakes"),
-        foodEarned = o.getInt("foodEarned"), newTiles = o.getInt("newTiles"), passengers = o.getInt("passengers"),
-        gaugeGained = o.getInt("gaugeGained"), foodCapReached = o.getBoolean("foodCapReached"), line = o.getString("line"),
-    )
+    private fun parseTrip(o: JSONObject): Trip {
+        val b = o.getJSONObject("breakdown")
+        val tiles = o.getJSONArray("tiles")
+        return Trip(
+            id = o.getString("id"), km = o.getDouble("km"), safetyScore = o.getInt("safetyScore"), hardBrakes = o.getInt("hardBrakes"),
+            warnings = o.getInt("warnings"), laneChanges = o.getInt("laneChanges"), signaledLaneChanges = o.getInt("signaledLaneChanges"),
+            tiles = (0 until tiles.length()).map { i ->
+                tiles.getJSONObject(i).run { TileSegment(getString("id"), getBoolean("hardBrake"), getBoolean("warning"), getBoolean("assisted")) }
+            },
+            newTiles = o.getInt("newTiles"), credits = o.getInt("credits"),
+            clean = b.getInt("clean"), assistBonus = b.getInt("assistBonus"), mannerBonus = b.getInt("mannerBonus"), excluded = b.getInt("excluded"),
+            capReached = o.getBoolean("capReached"), rejected = o.getBoolean("rejected"),
+        )
+    }
 
-    private fun JSONObject.optStringOrNull(key: String) = if (isNull(key)) null else optString(key).ifEmpty { null }
+    private fun parseTile(o: JSONObject) = LandTile(
+        id = o.getString("id"), level = o.getInt("level"), owned = o.getBoolean("owned"),
+        visited = o.getJSONArray("visitDays").length() > 0, homeRoute = o.getBoolean("homeRoute"),
+        incomePerHour = o.getInt("incomePerHour"), pending = o.getInt("pending"),
+        buyCost = if (o.isNull("buyCost")) null else o.getInt("buyCost"),
+        upgradeCost = if (o.isNull("upgradeCost")) null else o.getInt("upgradeCost"),
+        special = if (o.isNull("special")) null else o.getString("special"),
+    )
 }

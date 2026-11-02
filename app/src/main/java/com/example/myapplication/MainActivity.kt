@@ -4,8 +4,12 @@ import ai.pleos.playground.tts.TextToSpeech
 import ai.pleos.playground.tts.constant.Mode
 import ai.pleos.playground.tts.listener.OnInitializeListener
 import ai.pleos.playground.vehicle.Vehicle
+import ai.pleos.playground.vehicle.api.model.telltale.Telltales
 import ai.pleos.playground.vehicle.constant.control.VehicleGear
+import ai.pleos.playground.vehicle.constant.telltale.TelltaleState
+import ai.pleos.playground.vehicle.constant.telltale.TelltaleType
 import ai.pleos.playground.vehicle.listener.GearSelectionListener
+import ai.pleos.playground.vehicle.listener.TelltaleInfoListener
 import android.app.Activity
 import android.content.pm.PackageManager
 import android.os.Bundle
@@ -16,11 +20,12 @@ import android.view.Gravity
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.TextView
 import java.util.Locale
 
-/** 화면 하나. 기어가 P일 때만 보이고, 주행이 시작되면 [onLeave]가 불린 뒤 사라진다. */
+/** 화면 하나. 정차(P 또는 주차 브레이크) 중에만 보이고, 주행이 시작되면 [onLeave]가 불린 뒤 사라진다. */
 abstract class Screen(val host: MainActivity) {
-    protected val ui get() = host.ui
+    val ui get() = host.ui
     abstract fun build(): View
     /** 다른 화면에서 돌아오거나 주차해서 다시 보일 때. */
     open fun onReturn() {}
@@ -28,8 +33,8 @@ abstract class Screen(val host: MainActivity) {
 }
 
 /**
- * 차량 앱의 유일한 Activity. 화면 전환과 기어 게이트를 맡는다.
- * 기어가 P가 아니거나 아직 모르면 어떤 게임 화면도 보여 주지 않는다.
+ * 차량 앱의 유일한 Activity. 화면 전환과 정차 게이트를 맡는다.
+ * 기어 P 또는 주차 브레이크일 때만 게임 화면을 보여 주고, 그 밖에는 조작 요소가 없는 주행 위젯만 보여 준다.
  */
 class MainActivity : Activity() {
     lateinit var ui: Ui
@@ -39,16 +44,29 @@ class MainActivity : Activity() {
     val vehicle: Vehicle by vehicleLazy
     private lateinit var root: FrameLayout
     private val stack = ArrayDeque<Screen>()
+    private var gearPark: Boolean? = null
+    private var parkingBrake = false
     private var parked: Boolean? = null
     private var shown: Any? = null
     private var tts: TextToSpeech? = null
     private var ttsReady = false
-    /** 이번 정차에서 미니게임을 처음 시작한 시각. 5분이 지나면 휴식을 권한다. */
-    var gameSessionStartedAt = 0L
+    private var widgetTiles: TextView? = null
+    private var widgetCredits: TextView? = null
+    private val onWidget: (Widget?) -> Unit = { updateWidget(it) }
 
     private val gearListener = object : GearSelectionListener {
         override fun onSelected(gear: VehicleGear?) { main.post { onGear(gear) } }
         override fun onFailed(e: Exception) { Log.w(TAG, "gear listener failed", e) }
+    }
+    private val telltaleListener = object : TelltaleInfoListener {
+        override fun onTelltaleInfoUpdated(info: Telltales?) {
+            info ?: return
+            val on = info.telltales.any {
+                (it.type == TelltaleType.PARKING_BRAKE || it.type == TelltaleType.ELECTRONIC_PARKING_BRAKE) && it.state != TelltaleState.OFF
+            }
+            main.post { parkingBrake = on; updateGate() }
+        }
+        override fun onFailed(e: Exception) { Log.w(TAG, "telltale listener failed", e) }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -58,15 +76,17 @@ class MainActivity : Activity() {
         root = FrameLayout(this).apply { setBackgroundColor(Palette.BG) }
         setContentView(root)
         // 처음이면 온보딩에서 권한 설명을 읽은 뒤 묻는다. 그 전에도 받을 수 있는 신호(기어 등)는 모은다.
-        if (Onboarding.done(this)) ensurePermissions() else DriveService.start(this)
-        stack.addLast(if (Onboarding.done(this)) TodayScreen(this) else OnboardingScreen(this))
+        if (Settings.onboarded(this)) ensurePermissions() else DriveService.start(this)
+        stack.addLast(if (Settings.onboarded(this)) HomeScreen(this) else OnboardingScreen(this))
         render()
+        TripEvents.listenWidget(onWidget)
         runCatching { vehicle.getGear().registerGearSelection(gearListener) }.onFailure { Log.w(TAG, "gear unavailable", it) }
+        runCatching { vehicle.getSafety().registerTelltales(telltaleListener) }.onFailure { Log.w(TAG, "telltales unavailable", it) }
     }
 
     /**
      * 리스너 이벤트를 놓쳐도 게이트가 멈추지 않게 보이는 동안 기어를 주기적으로 다시 읽는다.
-     * (에뮬레이터에서 같은 Vehicle의 다른 리스너를 해제한 뒤 기어 이벤트가 끊긴 적이 있다.)
+     * (에뮬레이터에서 기어 이벤트가 끊긴 적이 있다.)
      */
     private val gearPoll = object : Runnable {
         override fun run() {
@@ -81,15 +101,14 @@ class MainActivity : Activity() {
         super.onResume()
         main.removeCallbacks(gearPoll)
         main.post(gearPoll)
+        // 못 보낸 주행이 남아 있으면 다시 보내 본다.
+        if (Settings.onboarded(this)) DriveService.start(this)
     }
 
     override fun onPause() {
         main.removeCallbacks(gearPoll)
         super.onPause()
     }
-
-    /** 미니게임 입력용 Vehicle. 기어 게이트와 리스너를 섞지 않도록 게임마다 따로 만들고 끝나면 release 한다. */
-    fun newInputVehicle(): Vehicle = Vehicle(applicationContext).also { it.initialize() }
 
     fun ensurePermissions() {
         val missing = RUNTIME_PERMISSIONS.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
@@ -103,13 +122,19 @@ class MainActivity : Activity() {
     }
 
     private fun onGear(gear: VehicleGear?) {
-        val nowParked = gear == VehicleGear.GEAR_PARK
+        gear ?: return
+        gearPark = gear == VehicleGear.GEAR_PARK
+        updateGate()
+    }
+
+    private fun updateGate() {
+        val gp = gearPark ?: return
+        val nowParked = Rules.isParked(gp, parkingBrake)
         if (nowParked == parked) return
         parked = nowParked
         if (!nowParked) {
             // 주행 시작: 열려 있던 화면을 모두 닫고 첫 화면으로 돌아간다.
             while (stack.size > 1) stack.removeLast().onLeave()
-            gameSessionStartedAt = 0L
             tts?.stop()
         }
         render()
@@ -140,11 +165,17 @@ class MainActivity : Activity() {
 
     /** 바뀐 것이 있을 때만 다시 그린다(같은 화면을 반복해서 만들면 깜빡인다). */
     private fun render() {
-        val target: Any = if (parked == true) stack.last() else DRIVING
+        val target: Any = if (parked == true) stack.last() else if (parked == false) DRIVING else WAITING
         if (target === shown) return
         shown = target
         root.removeAllViews()
-        root.addView(if (target is Screen) target.build() else drivingCover(), FrameLayout.LayoutParams(-1, -1))
+        widgetTiles = null; widgetCredits = null
+        val view = when (target) {
+            is Screen -> target.build()
+            DRIVING -> drivingWidget()
+            else -> waiting()
+        }
+        root.addView(view, FrameLayout.LayoutParams(-1, -1))
     }
 
     /** 이미 보이는 화면을 새 데이터로 다시 그린다. */
@@ -156,19 +187,47 @@ class MainActivity : Activity() {
 
     fun isShowing(screen: Screen) = shown === screen
 
-    private fun drivingCover(): View = LinearLayout(this).apply {
+    private fun waiting(): View = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER
+        addView(ui.text("차량 상태를 확인하고 있어요", 30f, Palette.INK, bold = true).apply { gravity = Gravity.CENTER })
+    }
+
+    /**
+     * 주행 위젯: 숫자 두 개만 크게. 버튼·알림·소리 없음. 정차 중(신호 대기)에도 그대로 둔다.
+     * 숫자는 제자리에서 바꿔 다시 그리지 않는다(깜빡임 방지).
+     */
+    private fun drivingWidget(): View = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER
         setBackgroundColor(Palette.BG)
-        val waiting = parked == null
-        addView(ui.text(if (waiting) "차량 상태를 확인하고 있어요" else "주행 중에는 화면을 숨겨요", 30f, Palette.INK, bold = true).apply { gravity = Gravity.CENTER })
-        addView(ui.text(if (waiting) "기어가 P일 때 열려요" else "붕붕이는 조용히 기록하고 있어요. 주차(P)하면 다시 열려요.", 22f, Palette.MUTED).apply {
+        val row = ui.row(60).apply { gravity = Gravity.CENTER }
+        fun number(label: String): TextView {
+            val value = ui.text("0", 96f, Palette.ACCENT, bold = true).apply { gravity = Gravity.CENTER }
+            row.addView(ui.column(0).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+                addView(value)
+                addView(ui.text(label, 26f, Palette.MUTED).apply { gravity = Gravity.CENTER })
+            })
+            return value
+        }
+        widgetTiles = number("오늘 지나간 구간")
+        widgetCredits = number("누적 크레딧")
+        addView(row)
+        addView(ui.text("안전하게 달릴수록 크레딧이 커져요. 주차(P)하면 땅을 살 수 있어요.", 22f, Palette.MUTED).apply {
             gravity = Gravity.CENTER
-            setPadding(0, ui.dp(16), 0, 0)
+            setPadding(0, ui.dp(32), 0, 0)
         })
+        updateWidget(TripEvents.widget)
     }
 
-    /** 정차 중에만 붕붕이 목소리로 읽는다. */
+    private fun updateWidget(w: Widget?) {
+        w ?: return
+        widgetTiles?.text = String.format(Locale.KOREA, "%,d", w.todayTiles)
+        widgetCredits?.text = String.format(Locale.KOREA, "%,d", w.credits)
+    }
+
+    /** 정차 중에만 읽는다(음성 안내를 켠 사람만 부른다). */
     fun speak(line: String) {
         if (parked != true) return
         val engine = tts
@@ -195,8 +254,10 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         while (stack.isNotEmpty()) stack.removeLast().onLeave()
+        TripEvents.unlistenWidget(onWidget)
         if (vehicleLazy.isInitialized()) {
             runCatching { vehicle.getGear().unregisterGearSelection(gearListener) }
+            runCatching { vehicle.getSafety().unregisterTelltales(telltaleListener) }
             runCatching { vehicle.release() }
         }
         runCatching { tts?.release() }
@@ -204,8 +265,9 @@ class MainActivity : Activity() {
     }
 
     private companion object {
-        const val TAG = "Bungbung"
+        const val TAG = "Roadland"
         val DRIVING = Any()
+        val WAITING = Any()
         val RUNTIME_PERMISSIONS = listOf("android.car.permission.CAR_SPEED", "pleos.car.permission.FUSED_LOCATION")
     }
 }

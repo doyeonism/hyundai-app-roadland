@@ -1,114 +1,64 @@
 // 서버 API가 돌려줄 모양. 더미 백엔드와 실제 백엔드가 같은 타입을 쓴다.
 
-export type Axis = "smooth" | "explore" | "eco" | "safe" | "steady" | "together";
-
-export type AxisScores = Record<Axis, number>; // 0~100, 최근 14일
-
-export type Stage = number; // 1부터. 단계 수와 진화 레벨은 lib/grades.ts
-
-/** 진화할 때 정해져 다음 진화까지 유지되는 모습. */
-export interface Form {
-  main: Axis;
-  sub: Axis;
-}
-
-export interface Bungbung {
-  vehicleId: string;
-  name: string;
-  level: number;
-  xp: number;
-  xpToNext: number;
-  stage: Stage;
-  form: Form | null; // 진화 전에는 null
-  axes: AxisScores;
-  fullness: number; // 배부름 0~100
-  mood: number; // 기분 0~100
-  health: number; // 건강 0~100
-  equipped: { color: string; hat: string | null; deco: string | null };
-}
-
-export interface Wallet {
-  food: number;
-  coins: number;
-  gems: number;
-  buildGauge: number; // 0~100
-}
-
-export interface Mission {
+/** 차가 보내는 타일 한 칸의 주행 결과. 원본 좌표는 차 밖으로 나가지 않는다. */
+export interface TileSegment {
   id: string;
-  text: string;
-  progress: number;
-  goal: number;
-  reward: string;
+  hardBrake: boolean; // 이 타일 안에서 급제동
+  warning: boolean; // 이 타일 안에서 차량 안전 경고
+  assisted: boolean; // 에코 모드 또는 크루즈 주행
+}
+
+export interface TripInput {
+  startedAt: string;
+  endedAt: string;
+  km: number;
+  safetyScore: number; // 0~100, 차 안에서 계산
+  hardBrakes: number;
+  warnings: number;
+  laneChanges: number;
+  signaledLaneChanges: number;
+  tiles: TileSegment[];
 }
 
 export interface Trip {
   id: string;
-  endedAt: string; // ISO
-  from: string;
-  to: string;
+  endedAt: string;
   km: number;
+  safetyScore: number;
   hardBrakes: number;
-  foodEarned: number;
-  newTiles: number;
-  passengers: number;
-  gaugeGained: number;
-  foodCapReached: boolean;
-  completedMissionIds: string[];
-  line: string; // 붕붕이 말풍선
+  warnings: number;
+  laneChanges: number;
+  signaledLaneChanges: number;
+  tiles: TileSegment[];
+  newTiles: number; // 처음 지나가 구매할 수 있게 된 타일
+  credits: number; // 실제로 받은 크레딧(일일 상한 적용 뒤)
+  breakdown: { clean: number; assistBonus: number; mannerBonus: number; excluded: number };
+  capReached: boolean;
+  rejected: boolean; // 기록 검증 실패로 보상 없음
 }
-
-export type TileOwner = { kind: "me" } | { kind: "rival"; name: string } | { kind: "npc"; name: string } | { kind: "none" };
 
 export interface Tile {
-  h3: string;
-  owner: TileOwner;
-  affection: number;
-  protectedHome: boolean;
-  building: { typeId: string; builtAt: string } | null;
-  lastVisit: string | null;
-  partner: string | null; // 제휴 거점 이름
-}
-
-export interface BuildingType {
   id: string;
-  name: string;
-  emoji: string;
-  coinCost: number;
-  coinsPerHour: number;
+  /** 지나간 날짜(YYYY-MM-DD, 서울 기준). 홈 루트 판정에 쓴다. */
+  visitDays: string[];
+  level: number; // 0이면 아직 사지 않은 땅
+  collectedAt: string | null; // 마지막 수익 수령 시각
+  special: string | null; // 특별 구간 이름
 }
 
-export interface DexForm {
-  id: string; // `${main}-${sub}-${stage}`
-  main: Axis;
-  sub: Axis;
-  stage: Stage;
-  name: string;
-  unlocked: boolean;
-}
-
-export interface RankRow {
-  rank: number;
-  name: string;
-  value: number;
-  me: boolean;
-}
-
-export interface Season {
-  id: string;
-  name: string;
-  startsAt: string;
-  endsAt: string;
-  theme: string;
-  weeklyMissions: Mission[];
-  pass: { tier: number; free: string; paid: string }[];
-  passTier: number;
-}
-
-export interface CosmeticItem {
-  id: string;
-  slot: "color" | "hat" | "deco";
-  name: string;
-  value: string;
+export interface TileView extends Tile {
   owned: boolean;
+  homeRoute: boolean;
+  incomePerHour: number;
+  pending: number;
+  buyCost: number | null; // 살 수 있으면 가격
+  upgradeCost: number | null; // 올릴 수 있으면 가격
+}
+
+export interface Records {
+  safeStreak: number; // 안전 점수 90점 이상 연속 주행
+  bestSafeStreak: number;
+  recentScores: number[];
+  ownedTiles: number;
+  specials: { id: string; name: string; collected: boolean }[];
 }
