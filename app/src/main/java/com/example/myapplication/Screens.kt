@@ -110,13 +110,20 @@ class TodayScreen(host: MainActivity) : Screen(host) {
         val left = ui.column(14).apply {
             addView(BungbungView(host).apply { bung = h.bung }, LinearLayout.LayoutParams(-1, ui.dp(300)))
             addView(ui.text("${h.bung.name}  Lv.${h.bung.level}", 30f, bold = true))
+            addView(ui.text("${h.bung.stageLabel} · ${h.bung.formName}", 20f, Palette.MUTED))
             addView(ui.bar(h.bung.xp, h.bung.xpToNext))
             addView(ui.text(note ?: h.latestTrip?.line ?: "오늘도 부드럽게 달려 보자!", 24f).apply {
                 background = ui.rounded(Palette.CARD, 18)
                 setPadding(ui.dp(20), ui.dp(16), ui.dp(20), ui.dp(16))
             })
             val food = h.wallet.food
-            addView(ui.button(if (food > 0) "먹이 ${food}개 주기" else "먹이가 없어요 · 운전하면 생겨요") { feed(food) }.apply { isEnabled = food > 0; alpha = if (food > 0) 1f else 0.5f }, ui.matchWidth())
+            val canFeed = food > 0 && !h.bung.maxed
+            val label = when {
+                h.bung.maxed -> "최고 레벨이에요 · 먹이는 그대로 남아요"
+                food > 0 -> "먹이 ${food}개 주기"
+                else -> "먹이가 없어요 · 운전하면 생겨요"
+            }
+            addView(ui.button(label) { feed(food) }.apply { isEnabled = canFeed; alpha = if (canFeed) 1f else 0.5f }, ui.matchWidth())
         }
 
         val right = ui.column(14).apply {

@@ -1,5 +1,5 @@
 import { gridDisk, latLngToCell } from "h3-js";
-import { AXES, formName, stageForLevel, xpToNext } from "../rules";
+import { AXES, EVOLVED_STAGES, formName, stageForLevel, xpToNext } from "../rules";
 import type { Bungbung, BuildingType, CosmeticItem, DexForm, Mission, Season, Tile, Trip, Wallet } from "../types";
 
 // 더미 백엔드의 초기 상태. 실제 서버가 생기면 이 파일은 사라진다.
@@ -59,13 +59,13 @@ function seedDex(): DexForm[] {
   for (const main of AXES) {
     for (const sub of AXES) {
       if (sub.id === main.id) continue;
-      for (const stage of [2, 3, 4] as const) {
+      for (const stage of EVOLVED_STAGES) {
         forms.push({
           id: `${main.id}-${sub.id}-${stage}`,
           main: main.id,
           sub: sub.id,
           stage,
-          name: `${formName(main.id, stage)} · ${sub.label} 장식`,
+          name: `${formName({ main: main.id, sub: sub.id })} · ${sub.label} 장식`,
           unlocked: false,
         });
       }
@@ -84,6 +84,7 @@ export function createSeed() {
     xp: 70,
     xpToNext: xpToNext(level),
     stage: stageForLevel(level),
+    form: null,
     axes: { smooth: 72, explore: 41, eco: 55, safe: 63, steady: 80, together: 22 },
     fullness: 64,
     mood: 78,

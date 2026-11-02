@@ -27,7 +27,7 @@ class BungbungView(context: Context) : View(context) {
         canvas.save()
         canvas.translate((width - 200 * s) / 2, (height - 160 * s) / 2)
         canvas.scale(s, s)
-        val grow = 0.7f + b.stage * 0.1f
+        val grow = 0.8f + b.growth * 0.3f
         canvas.save()
         canvas.scale(grow, grow, 100f, 92f)
         paint.color = b.color
@@ -47,9 +47,9 @@ class BungbungView(context: Context) : View(context) {
         canvas.drawCircle(132f, 120f, 15f, paint)
         canvas.restore()
         emoji.textSize = 26f
-        if (b.stage > 1) mark[b.mainAxis]?.let { canvas.drawText(it, 160f, 40f, emoji) }
+        b.mainAxis?.let { mark[it] }?.let { canvas.drawText(it, 160f, 40f, emoji) }
         emoji.textSize = 30f
-        b.hat?.let { canvas.drawText(it, 100f, 36f - b.stage * 4, emoji) }
+        b.hat?.let { canvas.drawText(it, 100f, 36f - b.growth * 12, emoji) }
         emoji.textSize = 22f
         b.deco?.let { canvas.drawText(it, 42f, 70f, emoji) }
         emoji.textSize = 24f

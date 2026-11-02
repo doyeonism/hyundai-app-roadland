@@ -3,7 +3,7 @@ import BungbungAvatar from "@/components/BungbungAvatar";
 import Bar from "@/components/Bar";
 import { CollectButton } from "@/components/forms";
 import { getBungbung, getCurrentSeasonId, getMissions, getSeason, getToday, getWallet, pendingCoins } from "@/lib/api";
-import { formName, topAxes } from "@/lib/rules";
+import { formName } from "@/lib/rules";
 
 export default async function TodayPage() {
   const [b, wallet, today, missions, pending, seasonId] = await Promise.all([
@@ -34,7 +34,7 @@ export default async function TodayPage() {
           <div style={{ flex: 1 }}>
             <strong>{b.name}</strong>
             <div className="muted">
-              Lv.{b.level} {formName(topAxes(b.axes)[0], b.stage)}
+              Lv.{b.level} {formName(b.form)}
             </div>
             {latest && <p className="bubble" style={{ marginTop: 8 }}>{latest.line}</p>}
           </div>

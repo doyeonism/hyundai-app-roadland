@@ -1,7 +1,7 @@
 import "server-only";
 import { latLngToCell } from "h3-js";
 import { createSeed, BUILDING_TYPES, H3_RES, type DummyState } from "./dummy/seed";
-import { stageForLevel, topAxes, xpToNext, XP_PER_FOOD } from "./rules";
+import { foodToMax, formName, gainXp, growth, MAX_LEVEL, stageLabel, topAxes, XP_PER_FOOD } from "./rules";
 import type { Axis, CosmeticItem, RankRow, Trip } from "./types";
 
 // 더미 백엔드. 화면은 이 파일의 함수만 부른다.
@@ -50,26 +50,22 @@ export async function getToday() {
 
 export async function feed(amount: number) {
   const s = db();
-  const n = Math.max(0, Math.min(amount, s.wallet.food));
-  if (n === 0) return { evolved: false };
-  s.wallet.food -= n;
   const b = s.bungbung;
-  const before = b.stage;
-  b.xp += n * XP_PER_FOOD;
+  const n = Math.max(0, Math.min(Math.floor(amount), s.wallet.food, foodToMax(b)));
+  if (n === 0) return { evolved: false, maxed: b.level >= MAX_LEVEL };
+  s.wallet.food -= n;
   b.fullness = Math.min(100, b.fullness + n * 2);
-  while (b.xp >= b.xpToNext) {
-    b.xp -= b.xpToNext;
-    b.level += 1;
-    b.xpToNext = xpToNext(b.level);
-  }
-  b.stage = stageForLevel(b.level);
-  const evolved = b.stage !== before;
-  if (evolved) {
+  const passed = gainXp(b, n * XP_PER_FOOD);
+  if (passed.length > 0) {
+    // 진화하는 순간의 운전 습관으로 모습을 정하고, 넘은 단계의 도감을 모두 연다.
     const [main, sub] = topAxes(b.axes);
-    const form = s.dex.find((f) => f.id === `${main}-${sub}-${b.stage}`);
-    if (form) form.unlocked = true;
+    b.form = { main, sub };
+    for (const stage of passed) {
+      const form = s.dex.find((f) => f.id === `${main}-${sub}-${stage}`);
+      if (form) form.unlocked = true;
+    }
   }
-  return { evolved };
+  return { evolved: passed.length > 0, maxed: b.level >= MAX_LEVEL };
 }
 
 export async function getItems(): Promise<CosmeticItem[]> {
@@ -298,6 +294,7 @@ export async function recordMinigame(game: "bath" | "run", score: number) {
 /** 차량 앱 첫 화면에 필요한 것을 한 번에. */
 export async function getCarHome() {
   const [b, wallet, missions, today] = await Promise.all([getBungbung(), getWallet(), getMissions(), getToday()]);
-  const [main] = topAxes(b.axes);
-  return { bungbung: { ...b, mainAxis: main }, wallet, missions, latestTrip: today.trips[0] ?? null, today: { km: today.km, newTiles: today.newTiles, food: today.food } };
+  // 차량 앱은 단계 수를 모르고, 여기서 계산한 이름과 크기를 그대로 그린다.
+  const car = { mainAxis: b.form?.main ?? null, formName: formName(b.form), stageLabel: stageLabel(b.stage), growth: growth(b.stage), maxed: b.level >= MAX_LEVEL };
+  return { bungbung: { ...b, ...car }, wallet, missions, latestTrip: today.trips[0] ?? null, today: { km: today.km, newTiles: today.newTiles, food: today.food } };
 }

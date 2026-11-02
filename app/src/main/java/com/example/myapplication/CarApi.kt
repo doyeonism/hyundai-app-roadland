@@ -19,7 +19,9 @@ data class Trip(
 )
 
 data class Bung(
-    val name: String, val level: Int, val xp: Int, val xpToNext: Int, val stage: Int, val mainAxis: String,
+    val name: String, val level: Int, val xp: Int, val xpToNext: Int,
+    /** 진화 전이면 null. 단계 수·이름·크기는 서버(lib/grades.ts)가 정해 보낸다. */
+    val mainAxis: String?, val formName: String, val stageLabel: String, val growth: Float, val maxed: Boolean,
     val color: Int, val hat: String?, val deco: String?, val mood: Int, val fullness: Int,
 )
 
@@ -102,7 +104,8 @@ object CarApi {
         return Home(
             bung = Bung(
                 name = b.getString("name"), level = b.getInt("level"), xp = b.getInt("xp"), xpToNext = b.getInt("xpToNext"),
-                stage = b.getInt("stage"), mainAxis = b.getString("mainAxis"),
+                mainAxis = b.optStringOrNull("mainAxis"), formName = b.getString("formName"), stageLabel = b.getString("stageLabel"),
+                growth = b.getDouble("growth").toFloat(), maxed = b.getBoolean("maxed"),
                 color = runCatching { Color.parseColor(eq.getString("color")) }.getOrDefault(Palette.ACCENT),
                 hat = eq.optStringOrNull("hat"), deco = eq.optStringOrNull("deco"),
                 mood = b.getInt("mood"), fullness = b.getInt("fullness"),

@@ -4,7 +4,13 @@ export type Axis = "smooth" | "explore" | "eco" | "safe" | "steady" | "together"
 
 export type AxisScores = Record<Axis, number>; // 0~100, 최근 14일
 
-export type Stage = 1 | 2 | 3 | 4; // 1 아기, 2 Lv10, 3 Lv30, 4 Lv60
+export type Stage = number; // 1부터. 단계 수와 진화 레벨은 lib/grades.ts
+
+/** 진화할 때 정해져 다음 진화까지 유지되는 모습. */
+export interface Form {
+  main: Axis;
+  sub: Axis;
+}
 
 export interface Bungbung {
   vehicleId: string;
@@ -13,6 +19,7 @@ export interface Bungbung {
   xp: number;
   xpToNext: number;
   stage: Stage;
+  form: Form | null; // 진화 전에는 null
   axes: AxisScores;
   fullness: number; // 배부름 0~100
   mood: number; // 기분 0~100
@@ -75,7 +82,7 @@ export interface DexForm {
   id: string; // `${main}-${sub}-${stage}`
   main: Axis;
   sub: Axis;
-  stage: 2 | 3 | 4;
+  stage: Stage;
   name: string;
   unlocked: boolean;
 }

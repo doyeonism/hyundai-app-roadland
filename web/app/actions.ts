@@ -29,9 +29,10 @@ export async function logoutAction() {
 
 export async function feedAction(_: ActionResult, form: FormData): Promise<ActionResult> {
   await requirePlayer();
-  const { evolved } = await api.feed(Number(form.get("amount") ?? 0));
+  const { evolved, maxed } = await api.feed(Number(form.get("amount") ?? 0));
   revalidatePath("/", "layout");
-  return { ok: true, message: evolved ? "붕붕이가 진화했어요! 도감에 새 모습이 등록됐어요." : "냠냠! 경험치가 올랐어요." };
+  const message = evolved ? "붕붕이가 진화했어요! 도감에 새 모습이 등록됐어요." : maxed ? "최고 레벨이에요. 더 먹지 않아도 돼요." : "냠냠! 경험치가 올랐어요.";
+  return { ok: true, message };
 }
 
 export async function collectAction(): Promise<ActionResult> {

@@ -41,9 +41,17 @@ export function LinkForm() {
   );
 }
 
-export function FeedForm({ food }: { food: number }) {
+export function FeedForm({ food, maxed }: { food: number; maxed: boolean }) {
   const [state, action, pending] = useActionState(feedAction, null);
   const [amount, setAmount] = useState(Math.min(5, food));
+  if (maxed)
+    return (
+      <section className="card">
+        <h2>먹이 주기</h2>
+        <p className="muted">최고 레벨이라 더 먹지 않아도 돼요. 먹이 {food}개는 그대로 남아 있어요.</p>
+        <Msg state={state} />
+      </section>
+    );
   return (
     <form action={action} className="card">
       <div className="row between">
