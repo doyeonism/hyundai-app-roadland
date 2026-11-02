@@ -50,7 +50,8 @@ class DriveService : Service() {
     private var eco = false
     private var cruise = false
     /** 주행 시작 때 서버에서 받은 오늘 값. 위젯에 이번 주행 예상치를 더해 보여 준다. */
-    private var base = Widget(0, 0, 100)
+    private var baseCredits = 0
+    private var baseTiles: Set<String> = emptySet()
 
     private val gearListener = object : GearSelectionListener {
         override fun onSelected(gear: VehicleGear?) { worker.post { gear?.let { gearPark = it == VehicleGear.GEAR_PARK; evaluate() } } }
@@ -87,7 +88,8 @@ class DriveService : Service() {
     private val locationListener = object : FusedLocationListener {
         override fun onChanged(location: LocationData?) {
             location ?: return
-            worker.post { recorder.onLocation(location.latitude, location.longitude); pushWidget() }
+            val now = System.currentTimeMillis()
+            worker.post { recorder.onLocation(location.latitude, location.longitude, now); pushWidget() }
         }
         override fun onError(exception: Exception) { Log.w(TAG, "location failed", exception) }
     }
@@ -186,8 +188,9 @@ class DriveService : Service() {
         val now = System.currentTimeMillis()
         if (!parked && !recorder.active) {
             recorder.start(now)
-            base = Widget(0, 0, 100)
-            runCatching { CarApi.homeBlocking() }.onSuccess { base = Widget(it.today.tilesPassed, it.credits, 100) }
+            baseCredits = 0
+            baseTiles = emptySet()
+            runCatching { CarApi.homeBlocking() }.onSuccess { baseCredits = it.credits; baseTiles = it.today.tileIds }
             worker.removeCallbacks(poll)
             worker.post(poll)
             pushWidget()
@@ -212,7 +215,8 @@ class DriveService : Service() {
     private fun pushWidget() {
         if (!recorder.active) return
         val live = recorder.live()
-        TripEvents.publishWidget(Widget(base.todayTiles + live.tiles, base.credits + live.credits, live.safetyScore))
+        // 오늘 이미 지나간 타일을 다시 지나도 두 번 세지 않는다.
+        TripEvents.publishWidget(Widget((baseTiles + recorder.tileIds()).size, baseCredits + live.credits, live.safetyScore))
     }
 
     override fun onDestroy() {

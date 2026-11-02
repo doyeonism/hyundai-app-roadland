@@ -59,6 +59,8 @@ export function getToday() {
     km: Math.round(trips.reduce((s, t) => s + t.km, 0) * 10) / 10,
     newTiles: trips.reduce((s, t) => s + t.newTiles, 0),
     tilesPassed: new Set(trips.flatMap((t) => t.tiles.map((x) => x.id))).size,
+    /** 주행 위젯이 이번 주행과 겹치는 타일을 빼고 셀 수 있게. */
+    tileIds: [...new Set(trips.flatMap((t) => t.tiles.map((x) => x.id)))],
     driveCredits: trips.reduce((s, t) => s + t.credits, 0),
   };
 }
@@ -99,9 +101,12 @@ export function recordTrip(input: TripInput): Trip {
       if (!t.visitDays.includes(day)) t.visitDays = [...t.visitDays, day].sort();
     }
     s.credits += credits;
-    s.recentScores = [...s.recentScores, input.safetyScore].slice(-10);
-    s.safeStreak = input.safetyScore >= RULES.safeStreakScore ? s.safeStreak + 1 : 0;
-    s.bestSafeStreak = Math.max(s.bestSafeStreak, s.safeStreak);
+    // 지나간 타일이 없는 주행(위치를 못 받음)은 점수 기록에 넣지 않는다.
+    if (input.tiles.length > 0) {
+      s.recentScores = [...s.recentScores, input.safetyScore].slice(-10);
+      s.safeStreak = input.safetyScore >= RULES.safeStreakScore ? s.safeStreak + 1 : 0;
+      s.bestSafeStreak = Math.max(s.bestSafeStreak, s.safeStreak);
+    }
   }
 
   const trip: Trip = {

@@ -1,6 +1,11 @@
 package com.example.myapplication
 
 import kotlin.math.abs
+import kotlin.math.asin
+import kotlin.math.cos
+import kotlin.math.pow
+import kotlin.math.sin
+import kotlin.math.sqrt
 
 /** 한 타일 안에서의 주행 결과. 서버로는 이것만 간다(원본 좌표는 차 밖으로 보내지 않는다). */
 data class TileSegment(val id: String, var hardBrake: Boolean = false, var warning: Boolean = false, var assisted: Boolean = false)
@@ -21,6 +26,8 @@ data class LiveStats(val tiles: Int, val credits: Int, val safetyScore: Int)
  * - 안전 경고: 경고가 켜져 있는 동안 지나간 타일은 보상 제외. 켜질 때마다 한 번 센다.
  * - 에코 모드·크루즈: 켜진 채 지나간 타일은 보너스.
  * - 차선 변경: 30km/h 이상에서 핸들을 6도 넘게 꺾으면 한 번(4초에 한 번까지). 앞뒤 3초 안에 깜빡이가 켜져 있었으면 깜빡이 사용.
+ * - 위치 튐: 직전 위치에서 시속 250km 넘게 떨어진 위치는 믿지 않는다. 주행 시작 직후라면 직전 위치가 오래된 것이라 보고
+ *   그때까지의 타일을 버리고 새 위치부터 다시 센다.
  */
 class TripRecorder(
     private val hardDecelKphPerSec: Double = 7.5,
@@ -30,6 +37,8 @@ class TripRecorder(
     private val laneChangeMinKph: Double = 30.0,
     private val laneChangeCooldownMs: Long = 4000,
     private val signalWindowMs: Long = 3000,
+    private val maxJumpMps: Double = 70.0,
+    private val minJumpMeters: Double = 300.0,
 ) {
     var active = false
         private set
@@ -53,6 +62,8 @@ class TripRecorder(
     private var signalSeenAt = Long.MIN_VALUE / 2
     private var laneChangeAt = Long.MIN_VALUE / 2
     private var pendingLaneChangeAt: Long? = null
+    private var lastFix: Triple<Double, Double, Long>? = null
+    private var fixes = 0
 
     fun start(now: Long) {
         active = true
@@ -64,6 +75,8 @@ class TripRecorder(
         lastKph = null
         countedBrakeAt = Long.MIN_VALUE
         pendingLaneChangeAt = null
+        lastFix = null
+        fixes = 0
         if (warningOn) warnings++
     }
 
@@ -91,8 +104,21 @@ class TripRecorder(
         countIfPaired()
     }
 
-    fun onLocation(lat: Double, lng: Double) {
+    fun onLocation(lat: Double, lng: Double, now: Long) {
         if (!active) return
+        val prev = lastFix
+        if (prev != null) {
+            val m = meters(prev.first, prev.second, lat, lng)
+            val sec = maxOf(1.0, (now - prev.third) / 1000.0)
+            if (m >= minJumpMeters && m / sec > maxJumpMps) {
+                if (fixes > 2) return // 주행 중 한 번 튄 위치: 버린다
+                tiles.clear() // 시작 때 받은 오래된 위치였다: 새 위치부터 다시
+                current = null
+                fixes = 0
+            }
+        }
+        lastFix = Triple(lat, lng, now)
+        fixes++
         val id = HexGrid.tileFor(lat, lng)
         val seg = tiles.getOrPut(id) { TileSegment(id) }
         current = seg
@@ -138,16 +164,18 @@ class TripRecorder(
         } else if (now - at > signalWindowMs) pendingLaneChangeAt = null
     }
 
+    fun tileIds(): Set<String> = tiles.keys.toSet()
+
     fun live() = LiveStats(tiles.size, tiles.values.sumOf { Rules.tileCredit(it) }.toInt(), score())
 
     private fun score() = Rules.safetyScore(hardBrakes, warnings, laneChanges - signaledLaneChanges)
 
-    /** 끝난 주행. 너무 짧으면(100m 미만이고 타일도 두 칸 미만) null. */
+    /** 끝난 주행. 지나간 타일이 없거나(위치를 못 받음) 너무 짧으면(100m 미만이고 타일 두 칸 미만) null. */
     fun finish(now: Long): TripSummary? {
         if (!active) return null
         settleLaneChange(Long.MAX_VALUE / 2)
         active = false
-        if (km < 0.1 && tiles.size < 2) return null
+        if (tiles.isEmpty() || (km < 0.1 && tiles.size < 2)) return null
         return TripSummary(startedAt, now, km, score(), hardBrakes, warnings, laneChanges, signaledLaneChanges, tiles.values.map { it.copy() })
     }
 
@@ -156,6 +184,15 @@ class TripRecorder(
             hardBrakes++
             countedBrakeAt = brakeAt
             current?.hardBrake = true
+        }
+    }
+
+    companion object {
+        fun meters(lat1: Double, lng1: Double, lat2: Double, lng2: Double): Double {
+            val dLat = Math.toRadians(lat2 - lat1)
+            val dLng = Math.toRadians(lng2 - lng1)
+            val a = sin(dLat / 2).pow(2) + cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) * sin(dLng / 2).pow(2)
+            return 2 * 6_371_000.0 * asin(sqrt(a))
         }
     }
 }

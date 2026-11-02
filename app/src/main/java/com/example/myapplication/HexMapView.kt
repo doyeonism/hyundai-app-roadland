@@ -6,6 +6,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.view.MotionEvent
+import android.view.ScaleGestureDetector
 import android.view.View
 import kotlin.math.abs
 import kotlin.math.cos
@@ -14,7 +15,7 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
- * 육각 타일 지도. 영토 화면에서는 끌어서 옮기고 눌러서 고르고, 도착 요약에서는 이번 경로를 색으로 보여 준다.
+ * 육각 타일 지도. 영토 화면에서는 끌어서 옮기고, 두 손가락으로 확대하고, 눌러서 고른다. 도착 요약에서는 이번 경로를 색으로 보여 준다.
  * 타일 위치는 축 좌표만으로 그린다(위경도가 필요 없다).
  */
 class HexMapView(context: Context) : View(context) {
@@ -38,17 +39,17 @@ class HexMapView(context: Context) : View(context) {
     private val label = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER; color = Color.WHITE }
     private val hex = Path()
 
-    /** 이 타일들이 한눈에 들어오게 맞춘다. */
-    fun fit(ids: Collection<String>) {
+    /** 이 타일들이 한눈에 들어오게 맞춘다. 타일이 몇 칸 안 되면 너무 커지지 않게 최소 [minSpan]칸 넓이로 본다. */
+    fun fit(ids: Collection<String>, minSpan: Float = 0f) {
         if (ids.isEmpty() || width == 0) { fitted = false; return }
         val pts = ids.map { axialToWorld(HexGrid.parse(it)) }
         val minX = pts.minOf { it.first }; val maxX = pts.maxOf { it.first }
         val minY = pts.minOf { it.second }; val maxY = pts.maxOf { it.second }
         centerX = ((minX + maxX) / 2).toFloat()
         centerY = ((minY + maxY) / 2).toFloat()
-        val spanX = (maxX - minX + 4).toFloat()
-        val spanY = (maxY - minY + 4).toFloat()
-        size = minOf(width / spanX, height / spanY).coerceIn(10f, 60f)
+        val spanX = maxOf((maxX - minX + 4).toFloat(), minSpan)
+        val spanY = maxOf((maxY - minY + 4).toFloat(), minSpan)
+        size = minOf(width / spanX, height / spanY).coerceIn(MIN_SIZE, MAX_SIZE)
         fitted = true
         invalidate()
     }
@@ -117,6 +118,16 @@ class HexMapView(context: Context) : View(context) {
         if (outline != null) canvas.drawPath(hex, stroke.apply { this.color = outline; strokeWidth = outlineWidth })
     }
 
+    /** 확대(>1)·축소(<1). 화면 가운데를 기준으로 한다. */
+    fun zoom(factor: Float) {
+        size = (size * factor).coerceIn(MIN_SIZE, MAX_SIZE)
+        invalidate()
+    }
+
+    private val scaler = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+        override fun onScale(d: ScaleGestureDetector): Boolean { zoom(d.scaleFactor); return true }
+    })
+
     private var downX = 0f
     private var downY = 0f
     private var lastX = 0f
@@ -125,6 +136,8 @@ class HexMapView(context: Context) : View(context) {
 
     override fun onTouchEvent(e: MotionEvent): Boolean {
         if (route.isNotEmpty()) return false
+        scaler.onTouchEvent(e)
+        if (scaler.isInProgress || e.pointerCount > 1) { dragging = true; lastX = e.x; lastY = e.y; return true }
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> { downX = e.x; downY = e.y; lastX = e.x; lastY = e.y; dragging = false }
             MotionEvent.ACTION_MOVE -> {
@@ -156,6 +169,8 @@ class HexMapView(context: Context) : View(context) {
     }
 
     private companion object {
+        const val MIN_SIZE = 8f
+        const val MAX_SIZE = 90f
         val OWNED = intArrayOf(
             Color.rgb(52, 120, 84), Color.rgb(60, 150, 96), Color.rgb(72, 176, 108), Color.rgb(96, 200, 120), Color.rgb(140, 220, 120),
         )

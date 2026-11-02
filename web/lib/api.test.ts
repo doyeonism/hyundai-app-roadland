@@ -84,4 +84,16 @@ describe("주행 → 땅 → 방치 수익", () => {
     drive(["1:2"], { safetyScore: 60, hardBrakes: 2 });
     expect(getRecords().safeStreak).toBe(0);
   });
+
+  it("타일이 없는 주행은 연속 기록에 넣지 않는다", () => {
+    const start = getRecords().safeStreak;
+    drive([], { safetyScore: 100 });
+    expect(getRecords().safeStreak).toBe(start);
+  });
+
+  it("오늘 지나간 타일 ID를 알려 준다", () => {
+    drive(["5:1", "5:2"]);
+    drive(["5:2", "5:3"]);
+    expect(getHome().today.tileIds.sort()).toEqual(["5:1", "5:2", "5:3"]);
+  });
 });

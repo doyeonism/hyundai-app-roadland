@@ -15,7 +15,7 @@ data class Trip(
     val capReached: Boolean, val rejected: Boolean,
 )
 
-data class Today(val trips: Int, val km: Double, val tilesPassed: Int, val driveCredits: Int, val driveCap: Int)
+data class Today(val trips: Int, val km: Double, val tilesPassed: Int, val tileIds: Set<String>, val driveCredits: Int, val driveCap: Int)
 
 data class Home(
     val credits: Int, val pendingIncome: Int, val incomePerHour: Int, val idleCapHours: Int,
@@ -120,7 +120,11 @@ object CarApi {
         return Home(
             credits = o.getInt("credits"), pendingIncome = o.getInt("pendingIncome"), incomePerHour = o.getInt("incomePerHour"),
             idleCapHours = o.getInt("idleCapHours"), ownedTiles = o.getInt("ownedTiles"), buyableTiles = o.getInt("buyableTiles"),
-            today = Today(t.getInt("trips"), t.getDouble("km"), t.getInt("tilesPassed"), t.getInt("driveCredits"), t.getInt("driveCap")),
+            today = Today(
+                t.getInt("trips"), t.getDouble("km"), t.getInt("tilesPassed"),
+                t.getJSONArray("tileIds").let { a -> (0 until a.length()).map { a.getString(it) }.toSet() },
+                t.getInt("driveCredits"), t.getInt("driveCap"),
+            ),
             latestTrip = if (o.isNull("latestTrip")) null else parseTrip(o.getJSONObject("latestTrip")),
             safeStreak = o.getInt("safeStreak"),
         )

@@ -273,7 +273,9 @@ class TerritoryScreen(host: MainActivity) : Screen(host) {
         val mapView = map ?: HexMapView(host).also { v ->
             map = v
             v.onSelect = { id -> selected = id; note = null; host.refresh(this) }
-            v.post { v.fit(all.filter { it.owned || it.visited }.map { it.id }) }
+            // 내 땅 주변을 먼저 보여 준다. 내 땅이 없으면 지나간 길 전체.
+            val owned = all.filter { it.owned }.map { it.id }
+            v.post { if (owned.isNotEmpty()) v.fit(owned, minSpan = 12f) else v.fit(all.filter { it.visited }.map { it.id }) }
         }
         (mapView.parent as? android.view.ViewGroup)?.removeView(mapView)
         mapView.tiles = all
@@ -306,7 +308,13 @@ class TerritoryScreen(host: MainActivity) : Screen(host) {
                 note?.let { addView(ui.text(it, 22f, Palette.GOOD)) }
             })
         }
-        val left = ui.column(0).apply { addView(mapView, LinearLayout.LayoutParams(-1, ui.dp(560))) }
+        val left = android.widget.FrameLayout(host).apply {
+            addView(mapView, android.widget.FrameLayout.LayoutParams(-1, ui.dp(560)))
+            addView(ui.column(10).apply {
+                addView(ui.button("＋", primary = false) { mapView.zoom(1.4f) }, LinearLayout.LayoutParams(ui.dp(80), -2))
+                addView(ui.button("－", primary = false) { mapView.zoom(1 / 1.4f) }, LinearLayout.LayoutParams(ui.dp(80), -2))
+            }, android.widget.FrameLayout.LayoutParams(-2, -2, Gravity.END or Gravity.TOP).apply { setMargins(0, ui.dp(12), ui.dp(12), 0) })
+        }
         return page("내 영토", showBack = true) { addView(twoColumns(left, panel, 1.6f, 1f)) }
     }
 }
