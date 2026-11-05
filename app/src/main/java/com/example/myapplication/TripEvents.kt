@@ -46,7 +46,8 @@ object TripEvents {
 }
 
 /**
- * 아직 서버에 못 보낸 주행. 통신이 끊겨도 기록을 잃지 않게 파일(SharedPreferences)에 쌓고, 정차하거나 앱을 열 때 순서대로 보낸다.
+ * 아직 서버에 못 보낸 주행. 각 주행에는 clientTripId 가 있어, 서버가 처리했는데 응답만 끊긴 경우 다시 보내도 한 번만 정산된다.
+ * 통신이 끊겨도 기록을 잃지 않게 파일(SharedPreferences)에 쌓고, 정차하거나 앱을 열 때 순서대로 보낸다.
  */
 object TripQueue {
     private const val KEY = "pending_trips"
@@ -65,9 +66,16 @@ object TripQueue {
         while (true) {
             val list = load(context)
             if (list.length() == 0) break
-            val trip = runCatching { CarApi.postTripBlocking(list.getJSONObject(0)) }
-                .onFailure { Log.w("RoadDrive", "trip upload failed, ${list.length()} waiting", it) }
-                .getOrNull() ?: break
+            val result = runCatching { CarApi.postTripBlocking(list.getJSONObject(0)) }
+            // 서버가 받아들이지 않은 기록(형식 오류 등)은 다시 보내도 같으므로 버린다. 뒤의 주행이 막히지 않게.
+            val rejected = result.exceptionOrNull() is CarApi.GameException
+            if (result.isFailure) Log.w("RoadDrive", "trip upload failed${if (rejected) ", dropped" else ""}, ${list.length()} waiting", result.exceptionOrNull())
+            if (rejected) {
+                list.remove(0)
+                TripEvents.prefs(context).edit().putString(KEY, list.toString()).commit()
+                continue
+            }
+            val trip = result.getOrNull() ?: break
             list.remove(0)
             TripEvents.prefs(context).edit().putString(KEY, list.toString()).commit()
             Log.i("RoadDrive", "trip settled: ${trip.id} credits=${trip.credits} newTiles=${trip.newTiles}")

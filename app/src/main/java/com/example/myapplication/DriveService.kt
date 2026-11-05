@@ -119,6 +119,7 @@ class DriveService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        CarApi.init(this)
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel(CHANNEL, "주행 기록", NotificationManager.IMPORTANCE_MIN))
         val notification = Notification.Builder(this, CHANNEL)

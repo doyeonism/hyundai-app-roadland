@@ -71,6 +71,7 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        CarApi.init(this)
         ui = Ui(this)
         window.decorView.setBackgroundColor(Palette.BG)
         root = FrameLayout(this).apply { setBackgroundColor(Palette.BG) }

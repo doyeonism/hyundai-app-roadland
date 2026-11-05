@@ -322,13 +322,18 @@ class TerritoryScreen(host: MainActivity) : Screen(host) {
 /** 안전 운전 연속 기록과 특별 구간 수집 현황. 지역 랭킹은 MVP 범위 밖. */
 class RecordsScreen(host: MainActivity) : Screen(host) {
     private var records: Records? = null
+    private var ranking: Ranking? = null
     private var error: String? = null
 
     init { load() }
 
-    private fun load() = CarApi.records { r ->
-        r.onSuccess { records = it; error = null }.onFailure { error = "서버에 연결하지 못했어요" }
-        host.refresh(this)
+    private fun load() {
+        CarApi.records { r ->
+            r.onSuccess { records = it; error = null }.onFailure { error = "서버에 연결하지 못했어요" }
+            host.refresh(this)
+        }
+        // 순위는 없어도 화면은 보여 준다.
+        CarApi.ranking { r -> r.onSuccess { ranking = it; host.refresh(this) } }
     }
 
     override fun build(): View {
@@ -342,6 +347,11 @@ class RecordsScreen(host: MainActivity) : Screen(host) {
             })
             addView(ui.text("안전 점수 90점 이상 주행이 이어지면 늘어나요.", 18f, Palette.MUTED))
             addView(ui.text("최근 점수  " + rec.recentScores.takeLast(7).joinToString("  "), 22f))
+            ranking?.let { rk ->
+                val land = rk.landRank?.let { "땅 점수 ${it}위 (${rk.landScore})" } ?: "땅 점수 순위 없음"
+                val weekly = rk.weeklyRank?.let { "이번 주 주행 ${it}위 (${rk.weeklyCredits})" } ?: "이번 주 주행 순위 없음"
+                addView(ui.text("$land · $weekly", 22f, Palette.ACCENT))
+            }
         }
         val right = ui.card().apply {
             addView(ui.text("특별 구간 수집 ${rec.specials.count { it.collected }}/${rec.specials.size}", 20f, Palette.MUTED))

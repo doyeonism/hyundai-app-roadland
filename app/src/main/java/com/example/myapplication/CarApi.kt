@@ -1,5 +1,6 @@
 package com.example.myapplication
 
+import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import org.json.JSONArray
@@ -29,18 +30,32 @@ data class LandTile(
 
 data class Special(val name: String, val collected: Boolean)
 
+/** 내 순위. 순위표에 없으면 null. */
+data class Ranking(val landRank: Int?, val landScore: Int, val weeklyRank: Int?, val weeklyCredits: Int)
+
 data class Records(
     val safeStreak: Int, val bestSafeStreak: Int, val recentScores: List<Int>, val ownedTiles: Int, val specials: List<Special>,
 )
 
-/** 영토 서버. 지금은 web/의 더미 백엔드(`/api/car/...`)를 부른다. */
+/**
+ * 영토 서버(hyundai-server 의 NestJS `v1/car/...`).
+ * 처음 부를 때 기기를 등록해 토큰을 받아 두고, 이후 요청마다 `Authorization: Bearer` 로 보낸다.
+ * 서버 응답은 `{ result, message, data }` 봉투이고, 실패하면 message 에 안내 문구가 온다.
+ */
 object CarApi {
-    /** 에뮬레이터에서 호스트 PC의 dev 서버. 실차·실서버로 갈 때 바꾼다. */
-    const val BASE = "http://10.0.2.2:3100/api/car"
-    const val VEHICLE_ID = "veh_demo"
+    /** 빌드 때 정한다(gradle -ProadlandServer=...). 기본은 에뮬레이터에서 본 호스트 PC의 dev 서버. */
+    val BASE: String = BuildConfig.ROADLAND_SERVER
 
+    private const val TOKEN = "device_token"
     private val io = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
+    @Volatile private var context: Context? = null
+    private val tokenLock = Any()
+
+    /** 앱·서비스가 켜질 때 부른다. 토큰을 저장할 곳. */
+    fun init(context: Context) {
+        this.context = context.applicationContext
+    }
 
     fun home(callback: (Result<Home>) -> Unit) = async(callback) { homeBlocking() }
 
@@ -68,16 +83,25 @@ object CarApi {
         )
     }
 
+    fun ranking(callback: (Result<Ranking>) -> Unit) = async(callback) {
+        val o = request("GET", "/ranking", null)
+        val land = o.getJSONObject("land").optJSONObject("mine")
+        val weekly = o.getJSONObject("weekly").optJSONObject("mine")
+        Ranking(land?.getInt("rank"), land?.getInt("score") ?: 0, weekly?.getInt("rank"), weekly?.getInt("score") ?: 0)
+    }
+
     /** 수집 서비스의 작업 스레드에서 부른다. 큐에 저장해 둔 JSON을 그대로 보낸다. */
     fun postTripBlocking(body: JSONObject): Trip = parseTrip(request("POST", "/trips", body))
 
+    /** 큐에 저장할 주행 본문. clientTripId 가 있어 응답을 못 받고 다시 보내도 서버가 한 번만 정산한다. */
     fun tripBody(s: TripSummary): JSONObject = JSONObject()
+        .put("clientTripId", java.util.UUID.randomUUID().toString())
         .put("startedAt", iso(s.startedAt)).put("endedAt", iso(s.endedAt))
         .put("km", s.km).put("safetyScore", s.safetyScore).put("hardBrakes", s.hardBrakes).put("warnings", s.warnings)
         .put("laneChanges", s.laneChanges).put("signaledLaneChanges", s.signaledLaneChanges)
         .put("tiles", JSONArray().apply { s.tiles.forEach { put(segmentJson(it)) } })
 
-    /** 서버가 400으로 돌려준 안내 문구. */
+    /** 서버가 요청을 받아들이지 않았다(4xx). 다시 보내도 결과가 같다. message 는 사용자에게 보여 줄 문구. */
     class GameException(message: String) : Exception(message)
 
     private fun <T> async(callback: (Result<T>) -> Unit, work: () -> T) {
@@ -87,13 +111,29 @@ object CarApi {
         }
     }
 
+    /** 응답 봉투의 data. 토큰이 서버에 없으면(서버 DB 초기화 등) 다시 등록하고 한 번 더 보낸다. */
     private fun request(method: String, path: String, body: JSONObject?): JSONObject {
+        val (code, json) = send(method, path, body, token())
+        if (code != 401) return unwrap(code, json)
+        clearToken()
+        val (retryCode, retryJson) = send(method, path, body, token())
+        return unwrap(retryCode, retryJson)
+    }
+
+    private fun unwrap(code: Int, json: JSONObject): JSONObject {
+        val message = json.optString("message").ifBlank { "요청을 처리하지 못했어요" }
+        if (code in 400..499 && code != 408 && code != 409 && code != 429) throw GameException(message)
+        if (code !in 200..299) throw java.io.IOException("HTTP $code $message")
+        return json.optJSONObject("data") ?: JSONObject()
+    }
+
+    private fun send(method: String, path: String, body: JSONObject?, token: String?): Pair<Int, JSONObject> {
         val conn = URL(BASE + path).openConnection() as HttpURLConnection
         try {
             conn.requestMethod = method
             conn.connectTimeout = 5000
             conn.readTimeout = 8000
-            conn.setRequestProperty("x-vehicle-id", VEHICLE_ID)
+            if (token != null) conn.setRequestProperty("Authorization", "Bearer $token")
             conn.setRequestProperty("Accept", "application/json")
             if (body != null || method == "POST") {
                 conn.doOutput = true
@@ -102,13 +142,25 @@ object CarApi {
             }
             val code = conn.responseCode
             val text = (if (code in 200..299) conn.inputStream else conn.errorStream)?.bufferedReader()?.use { it.readText() }.orEmpty()
-            if (code == 400) throw GameException(runCatching { JSONObject(text).getString("error") }.getOrDefault("요청을 처리하지 못했어요"))
-            if (code !in 200..299) throw java.io.IOException("HTTP $code $text")
-            return JSONObject(text)
+            return code to (runCatching { JSONObject(text) }.getOrNull() ?: JSONObject())
         } finally {
             conn.disconnect()
         }
     }
+
+    /** 저장해 둔 기기 토큰. 없으면 서버에 등록해서 받는다(작업 스레드에서만 부른다). */
+    private fun token(): String = synchronized(tokenLock) {
+        val prefs = prefs()
+        prefs.getString(TOKEN, null)?.let { return it }
+        val (code, json) = send("POST", "/devices", null, null)
+        val token = unwrap(code, json).getString("token")
+        prefs.edit().putString(TOKEN, token).commit()
+        token
+    }
+
+    private fun clearToken() = synchronized(tokenLock) { prefs().edit().remove(TOKEN).commit() }
+
+    private fun prefs() = (context ?: error("CarApi.init 먼저")).getSharedPreferences("roadland", Context.MODE_PRIVATE)
 
     private fun iso(millis: Long) = java.time.Instant.ofEpochMilli(millis).toString()
 
