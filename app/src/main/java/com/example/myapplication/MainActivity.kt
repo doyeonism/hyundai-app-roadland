@@ -147,6 +147,23 @@ class MainActivity : Activity() {
         render()
     }
 
+    /** 메뉴 전환은 화면을 계속 쌓지 않고 홈 위의 콘텐츠만 교체한다. */
+    fun selectMenu(menu: String) {
+        val current = stack.last()
+        if ((menu == "home" && current is HomeScreen) ||
+            (menu == "territory" && current is TerritoryScreen) ||
+            (menu == "records" && current is RecordsScreen) ||
+            (menu == "settings" && current is SettingsScreen)) return
+        while (stack.size > 1) stack.removeLast().onLeave()
+        when (menu) {
+            "territory" -> stack.addLast(TerritoryScreen(this))
+            "records" -> stack.addLast(RecordsScreen(this))
+            "settings" -> stack.addLast(SettingsScreen(this))
+        }
+        render()
+        if (menu == "home") stack.last().onReturn()
+    }
+
     fun replaceRoot(screen: Screen) {
         while (stack.isNotEmpty()) stack.removeLast().onLeave()
         stack.addLast(screen)
@@ -172,7 +189,7 @@ class MainActivity : Activity() {
         root.removeAllViews()
         widgetTiles = null; widgetCredits = null
         val view = when (target) {
-            is Screen -> target.build()
+            is Screen -> if (target is OnboardingScreen) target.build() else target.withSidebar(target.build())
             DRIVING -> drivingWidget()
             else -> waiting()
         }

@@ -32,12 +32,33 @@ class MapTiles(context: Context, private val onLoaded: () -> Unit) {
     private val queued = HashMap<String, Job>()
     private val failed = HashMap<String, Long>()
     private val main = Handler(Looper.getMainLooper())
+    // 현재 화면의 타일은 주변 타일을 미리 읽더라도 LRU에서 밀려나지 않게 보관한다.
+    private var visibleKeys: Set<String> = emptySet()
+    private val visible = HashMap<String, Bitmap>()
+
+    fun setViewport(z: Int, x0: Int, y0: Int, cols: Int, rows: Int) {
+        val n = 1 shl z
+        val keys = buildSet {
+            for (y in y0..y0 + rows) for (x in x0..x0 + cols) {
+                if (y in 0 until n) add(key(z, Math.floorMod(x, n), y))
+            }
+        }
+        visibleKeys = keys
+        visible.keys.retainAll(keys)
+        for (k in keys) if (k !in visible) memory.get(k)?.let { visible[k] = it }
+    }
 
     /** 화면에 보이는 타일. 있으면 바로 주고, 없으면 먼저 받도록 줄 세운 뒤 null. 받으면 [onLoaded]를 부른다. */
-    fun get(z: Int, x: Int, y: Int): Bitmap? = memory.get(key(z, x, y)) ?: run { load(z, x, y, urgent = true); null }
+    fun get(z: Int, x: Int, y: Int): Bitmap? {
+        val k = key(z, x, y)
+        return visible[k] ?: memory.get(k)?.also { if (k in visibleKeys) visible[k] = it }
+            ?: run { load(z, x, y, urgent = true); null }
+    }
 
     /** 곧 보일 수 있는 타일. 메모리에 없으면 남는 틈에 받아 둔다. */
     fun prefetch(z: Int, x: Int, y: Int) {
+        // 캐시가 찼을 때 주변 타일끼리 서로 밀어내며 다시 받는 루프를 방지한다.
+        if (memory.size() >= memory.maxSize() * 3 / 4) return
         if (memory.get(key(z, x, y)) == null && queued.size < MAX_QUEUED) load(z, x, y, urgent = false)
     }
 
@@ -57,7 +78,13 @@ class MapTiles(context: Context, private val onLoaded: () -> Unit) {
             val bmp = runCatching { read(z, x, y) }.getOrNull()
             main.post {
                 queued -= key
-                if (bmp != null) { memory.put(key, bmp); onLoaded() } else failed[key] = now + RETRY_MS
+                if (bmp != null) {
+                    memory.put(key, bmp)
+                    if (key in visibleKeys) {
+                        visible[key] = bmp
+                        onLoaded()
+                    }
+                } else failed[key] = System.currentTimeMillis() + RETRY_MS
             }
         }
         queued[key] = job

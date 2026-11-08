@@ -26,13 +26,83 @@ import kotlin.math.sqrt
 class HexMapView(context: Context) : View(context) {
     /** 영토: 지나간 땅과 내 땅. */
     var tiles: List<LandTile> = emptyList()
-        set(value) { field = value; byId = value.associateBy { it.id }; invalidate() }
+        set(value) { field = value; byId = value.associateBy { it.id }; clusterCache.clear(); invalidate() }
     /** 이번 주행 경로. 있으면 경로 보기로 그린다. */
     var route: List<TileSegment> = emptyList()
         set(value) { field = value; invalidate() }
     var selected: String? = null
         set(value) { field = value; invalidate() }
     var onSelect: ((String) -> Unit)? = null
+
+    var exploreRegions = false
+    private data class Region(val x: Float, val y: Float, val count: Int, val ownedCount: Int)
+    private val clusterCache = mutableMapOf<Int, List<Region>>()
+    private val regionHits = mutableListOf<Triple<Float, Float, Region>>()
+
+    /** 대한민국 본토와 제주·울릉도·독도를 포함하는 시작 범위. */
+    fun showKorea() {
+        fit(listOf(HexGrid.tileFor(32.7, 124.3), HexGrid.tileFor(38.8, 132.1)))
+        size *= 0.86f
+        selected = null
+        invalidate()
+    }
+
+    private fun regionSpan(): Int = when {
+        size < 0.06f -> 8000 // 메르카토르 100 km 권역
+        size < 0.4f -> 1600
+        size < 3f -> 160
+        else -> 16
+    }
+
+    private fun drawRegions(canvas: Canvas) {
+        val span = regionSpan()
+        val regions = clusterCache.getOrPut(span) {
+            tiles.filter { it.owned || it.visited }
+                .map { it to axialToWorld(HexGrid.parse(it.id)) }
+                .groupBy { (_, point) -> floor(point.first / span).toLong() to floor(point.second / span).toLong() }
+                .values.map { entries ->
+                    Region(entries.map { it.second.first }.average().toFloat(),
+                        entries.map { it.second.second }.average().toFloat(), entries.size,
+                        entries.count { it.first.owned })
+                }
+        }
+        regionHits.clear()
+        val density = resources.displayMetrics.density
+        val radius = 32f * density
+        for (region in regions) {
+            val x = width / 2f + (region.x - centerX) * size
+            val y = height / 2f + (region.y - centerY) * size
+            if (x < -radius || y < -radius || x > width + radius || y > height + radius) continue
+            val color = if (region.ownedCount == region.count) Palette.ACCENT else Palette.ASSIST
+            canvas.drawCircle(x, y, radius * 1.45f, fill.apply { this.color = withAlpha(color, 65) })
+            canvas.drawCircle(x, y, radius, fill.apply { this.color = color })
+            label.apply { textSize = 20f * density; this.color = Palette.ON_ACCENT; isFakeBoldText = true }
+            canvas.drawText(region.count.toString(), x, y - (label.ascent() + label.descent()) / 2, label)
+            val caption = when {
+                region.ownedCount == region.count -> "내 땅 ${region.count}"
+                region.ownedCount == 0 -> "지나온 땅 ${region.count}"
+                else -> "내 땅 ${region.ownedCount} · 지나온 땅 ${region.count - region.ownedCount}"
+            }
+            label.textSize = 16f * density
+            val textWidth = label.measureText(caption)
+            canvas.drawRoundRect(x - textWidth / 2 - 10 * density, y + radius + 6 * density,
+                x + textWidth / 2 + 10 * density, y + radius + 34 * density, 8 * density, 8 * density,
+                fill.apply { this.color = Palette.CARD })
+            label.color = Palette.INK
+            canvas.drawText(caption, x, y + radius + 26 * density, label)
+            regionHits.add(Triple(x, y, region))
+        }
+    }
+
+    private fun openRegion(x: Float, y: Float) {
+        val hit = regionHits.minByOrNull { hypot(it.first - x, it.second - y) } ?: return
+        if (hypot(hit.first - x, hit.second - y) > 64f * resources.displayMetrics.density) return
+        centerX = hit.third.x
+        centerY = hit.third.y
+        size = when { size < 0.06f -> 0.15f; size < 0.4f -> 1f; size < 3f -> 6f; else -> 24f }
+        selected = null
+        invalidate()
+    }
 
     private var byId: Map<String, LandTile> = emptyMap()
     private var size = 28f
@@ -43,17 +113,23 @@ class HexMapView(context: Context) : View(context) {
     private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
     private val label = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER; color = Color.WHITE }
     private val hex = Path()
-    // 밝은 지도를 어두운 화면에 맞춰 어둡게, 채도를 낮춰 깐다(타일 위 색이 잘 보이게).
+    // 지명과 도로를 읽을 수 있는 밝기를 유지하면서 영토 색을 강조한다.
     private val tilePaint = Paint(Paint.FILTER_BITMAP_FLAG).apply {
         colorFilter = android.graphics.ColorMatrixColorFilter(android.graphics.ColorMatrix().apply {
-            setSaturation(0.35f)
-            postConcat(android.graphics.ColorMatrix().apply { setScale(0.5f, 0.52f, 0.58f, 1f) })
+            setSaturation(0.45f)
+            postConcat(android.graphics.ColorMatrix().apply { setScale(0.72f, 0.74f, 0.76f, 1f) })
         })
+    }
+    /** 내 땅의 빛나는 테두리(바깥으로 번지는 라임). */
+    private val glow = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        color = Palette.ACCENT
+        maskFilter = android.graphics.BlurMaskFilter(6f, android.graphics.BlurMaskFilter.Blur.OUTER)
     }
     private val credit = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(170, 200, 205, 215); textAlign = Paint.Align.RIGHT }
     private val tileRect = RectF()
     private val tileSrc = android.graphics.Rect()
-    private val mapTiles = MapTiles(context) { invalidate() }
+    private val mapTiles = MapTiles(context) { postInvalidateOnAnimation() }
 
     /**
      * 이 타일들이 한눈에 들어오게 맞춘다. 타일이 몇 칸 안 되면 너무 커지지 않게 최소 [minSpan]칸 넓이로 본다.
@@ -94,9 +170,9 @@ class HexMapView(context: Context) : View(context) {
     }
 
     override fun onDraw(canvas: Canvas) {
-        canvas.drawColor(Color.rgb(20, 26, 34))
+        canvas.drawColor(Color.rgb(14, 14, 15))
         drawBaseMap(canvas)
-        if (route.isNotEmpty()) drawRoute(canvas) else drawTerritory(canvas)
+        if (route.isNotEmpty()) drawRoute(canvas) else if (exploreRegions && size < 10f) drawRegions(canvas) else drawTerritory(canvas)
         credit.textSize = 11f * resources.displayMetrics.density
         canvas.drawText(MapTiles.ATTRIBUTION, width - 8f, height - 8f, credit)
     }
@@ -118,6 +194,7 @@ class HexMapView(context: Context) : View(context) {
         val x0 = floor(left).toInt(); val y0 = floor(top).toInt()
         val cols = ceil(width / tilePx).toInt() + 1
         val rows = ceil(height / tilePx).toInt() + 1
+        mapTiles.setViewport(z, x0, y0, cols, rows)
         for (ty in y0..y0 + rows) for (tx in x0..x0 + cols) {
             if (ty < 0 || ty >= n) continue
             val sx = ((tx - left) * tilePx).toFloat()
@@ -176,33 +253,40 @@ class HexMapView(context: Context) : View(context) {
         for (t in tiles) {
             val tileColor = when {
                 t.owned -> ownedColor(t.level)
-                t.ownedByOther -> Color.argb(170, 200, 80, 90) // 다른 차의 땅: 빼앗을 수 있다
-                t.visited -> Color.argb(110, 70, 100, 150)
-                else -> Color.argb(90, 36, 40, 48)
+                t.ownedByOther -> withAlpha(Palette.RIVAL, 150) // 다른 차의 땅: 빼앗을 수 있다
+                t.visited -> withAlpha(Palette.ASSIST, 125)
+                else -> Color.argb(60, 30, 30, 32)
             }
-            drawHex(canvas, t.id, tileColor, if (t.buyCost != null) Palette.ACCENT else null)
+            val outline = when {
+                t.owned -> Palette.ACCENT
+                t.ownedByOther -> Palette.RIVAL
+                t.visited -> Palette.ASSIST // 지나온 미소유 구간
+                else -> null
+            }
+            if (t.owned && size >= 6) drawHex(canvas, t.id, null, null, glowPaint = glow)
+            drawHex(canvas, t.id, tileColor, outline)
             val (x, y) = screen(t.id)
             label.textSize = size * if (t.level >= 10) 0.45f else 0.55f
             if (size < 14) continue // 너무 작으면 글자는 생략
-            if (t.owned) canvas.drawText("${t.level}", x, y + size * 0.2f, label.apply { color = Color.WHITE })
+            if (t.owned) canvas.drawText("${t.level}", x, y + size * 0.2f, label.apply { color = Palette.ON_ACCENT; isFakeBoldText = true })
             if (t.homeRoute) canvas.drawCircle(x + size * 0.45f, y - size * 0.45f, size * 0.12f, fill.apply { color = Color.rgb(255, 210, 90) })
         }
         selected?.let { drawHex(canvas, it, null, Color.WHITE, 4f) }
     }
 
     private fun drawRoute(canvas: Canvas) {
-        for (t in tiles) drawHex(canvas, t.id, if (t.owned) Color.argb(120, 40, 110, 76) else Color.argb(80, 34, 40, 50), null)
+        for (t in tiles) drawHex(canvas, t.id, if (t.owned) withAlpha(Palette.ACCENT, 70) else Color.argb(40, 255, 255, 255), null)
         for (s in route) {
             val segColor = when {
                 s.hardBrake || s.warning -> Palette.WARN
-                s.assisted -> Color.rgb(90, 220, 200)
+                s.assisted -> Palette.ASSIST
                 else -> Palette.GOOD
             }
             drawHex(canvas, s.id, segColor, null)
         }
     }
 
-    private fun drawHex(canvas: Canvas, id: String, color: Int?, outline: Int?, outlineWidth: Float = 2f) {
+    private fun drawHex(canvas: Canvas, id: String, color: Int?, outline: Int?, outlineWidth: Float = 2f, glowPaint: Paint? = null) {
         val (x, y) = screen(id)
         if (x < -size || y < -size || x > width + size || y > height + size) return
         hex.reset()
@@ -213,6 +297,7 @@ class HexMapView(context: Context) : View(context) {
             if (i == 0) hex.moveTo(px, py) else hex.lineTo(px, py)
         }
         hex.close()
+        if (glowPaint != null) canvas.drawPath(hex, glowPaint.apply { strokeWidth = maxOf(2f, size * 0.12f) })
         if (color != null) canvas.drawPath(hex, fill.apply { this.color = color })
         // 아주 작게 줄였을 때는 테두리가 칸을 덮으므로 고른 칸 표시만 남긴다.
         if (outline != null && (size >= 6 || outlineWidth > 2f)) canvas.drawPath(hex, stroke.apply { this.color = outline; strokeWidth = outlineWidth })
@@ -249,7 +334,10 @@ class HexMapView(context: Context) : View(context) {
                     invalidate()
                 }
             }
-            MotionEvent.ACTION_UP -> if (!dragging) tileAt(e.x, e.y)?.let { selected = it; onSelect?.invoke(it) }
+            MotionEvent.ACTION_UP -> if (!dragging) {
+                if (exploreRegions && size < 10f) openRegion(e.x, e.y)
+                else tileAt(e.x, e.y)?.let { selected = it; onSelect?.invoke(it) }
+            }
         }
         return true
     }
@@ -270,7 +358,7 @@ class HexMapView(context: Context) : View(context) {
 
     companion object {
         /** 화면에서 타일 한 칸(약 10m)의 크기(px) 범위. 0.4px면 지도 칸이 수 km, 120px면 골목 단위. */
-        const val MIN_SIZE = 0.4f
+        const val MIN_SIZE = 0.003f
         const val MAX_SIZE = 120f
         /** 영토 화면을 처음 열 때 크기. 타일 한 칸이 손가락으로 고를 만큼(약 16px, 화면 너비 약 400m). */
         const val STREET_SIZE = 16f
@@ -283,10 +371,12 @@ class HexMapView(context: Context) : View(context) {
         const val MAX_LEVEL = 60
 
         /** 레벨 1(짙은 초록)에서 [MAX_LEVEL](밝은 연두)까지 이어지는 색. 지도가 비치게 반투명. */
+        /** 레벨 1(옅은 라임)에서 [MAX_LEVEL](꽉 찬 라임)까지 진해진다. 낮은 레벨은 지도가 비친다. */
         fun ownedColor(level: Int): Int {
             val f = ((level - 1).toFloat() / (MAX_LEVEL - 1)).coerceIn(0f, 1f)
-            fun mix(a: Int, b: Int) = (a + (b - a) * f).toInt()
-            return Color.argb(mix(170, 225), mix(40, 170), mix(120, 230), mix(80, 110))
+            return withAlpha(Palette.ACCENT, (150 + 100 * f).toInt())
         }
+
+        fun withAlpha(color: Int, alpha: Int) = Color.argb(alpha, Color.red(color), Color.green(color), Color.blue(color))
     }
 }
