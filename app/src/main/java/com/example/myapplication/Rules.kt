@@ -5,7 +5,7 @@ package com.example.myapplication
  * 타일 크레딧 값은 서버 RULES와 맞춘다.
  */
 object Rules {
-    const val TILE_CREDIT = 10
+    const val TILE_CREDIT = 2
     const val ASSIST_BONUS = 0.5
 
     /** 안전 점수: 100에서 급제동 15, 안전 경고 10, 깜빡이 없는 차선 변경 5씩 뺀다. */

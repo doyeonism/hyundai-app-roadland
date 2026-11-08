@@ -19,22 +19,25 @@ data class Trip(
 data class Today(val trips: Int, val km: Double, val tilesPassed: Int, val tileIds: Set<String>, val driveCredits: Int, val driveCap: Int)
 
 data class Home(
-    val credits: Int, val pendingIncome: Int, val incomePerHour: Int, val idleCapHours: Int,
+    val credits: Int, val pendingIncome: Int, val incomePerMinute: Double, val idleCapHours: Int,
     val ownedTiles: Int, val buyableTiles: Int, val today: Today, val latestTrip: Trip?, val safeStreak: Int,
 )
 
+/**
+ * 땅 한 칸. 한 칸에는 주인이 하나뿐이고, 다른 차의 땅([ownedByOther])도 [buyCost]를 내면 빼앗을 수 있다.
+ * [price]는 마지막 거래가, [goodTrips]/[badTrips]는 내가 이 칸을 지나간 주행 중 80점을 넘은 수와 아닌 수(수익에 쓰인다).
+ */
 data class LandTile(
-    val id: String, val level: Int, val owned: Boolean, val visited: Boolean, val homeRoute: Boolean,
-    val incomePerHour: Int, val pending: Int, val buyCost: Int?, val upgradeCost: Int?, val special: String?,
+    val id: String, val level: Int, val owned: Boolean, val ownedByOther: Boolean, val price: Int?, val visited: Boolean,
+    val homeRoute: Boolean, val goodTrips: Int, val badTrips: Int,
+    val incomePerMinute: Double, val pending: Int, val buyCost: Int?, val upgradeCost: Int?,
 )
-
-data class Special(val name: String, val collected: Boolean)
 
 /** 내 순위. 순위표에 없으면 null. */
 data class Ranking(val landRank: Int?, val landScore: Int, val weeklyRank: Int?, val weeklyCredits: Int)
 
 data class Records(
-    val safeStreak: Int, val bestSafeStreak: Int, val recentScores: List<Int>, val ownedTiles: Int, val specials: List<Special>,
+    val safeStreak: Int, val bestSafeStreak: Int, val recentScores: List<Int>, val ownedTiles: Int,
 )
 
 /**
@@ -76,10 +79,8 @@ object CarApi {
     fun records(callback: (Result<Records>) -> Unit) = async(callback) {
         val o = request("GET", "/records", null)
         val scores = o.getJSONArray("recentScores")
-        val specials = o.getJSONArray("specials")
         Records(
             o.getInt("safeStreak"), o.getInt("bestSafeStreak"), (0 until scores.length()).map { scores.getInt(it) }, o.getInt("ownedTiles"),
-            (0 until specials.length()).map { specials.getJSONObject(it).run { Special(getString("name"), getBoolean("collected")) } },
         )
     }
 
@@ -170,7 +171,7 @@ object CarApi {
     private fun parseHome(o: JSONObject): Home {
         val t = o.getJSONObject("today")
         return Home(
-            credits = o.getInt("credits"), pendingIncome = o.getInt("pendingIncome"), incomePerHour = o.getInt("incomePerHour"),
+            credits = o.getInt("credits"), pendingIncome = o.getInt("pendingIncome"), incomePerMinute = o.getDouble("incomePerMinute"),
             idleCapHours = o.getInt("idleCapHours"), ownedTiles = o.getInt("ownedTiles"), buyableTiles = o.getInt("buyableTiles"),
             today = Today(
                 t.getInt("trips"), t.getDouble("km"), t.getInt("tilesPassed"),
@@ -199,10 +200,11 @@ object CarApi {
 
     private fun parseTile(o: JSONObject) = LandTile(
         id = o.getString("id"), level = o.getInt("level"), owned = o.getBoolean("owned"),
+        ownedByOther = o.getBoolean("ownedByOther"), price = if (o.isNull("price")) null else o.getInt("price"),
         visited = o.getJSONArray("visitDays").length() > 0, homeRoute = o.getBoolean("homeRoute"),
-        incomePerHour = o.getInt("incomePerHour"), pending = o.getInt("pending"),
+        goodTrips = o.getInt("goodTrips"), badTrips = o.getInt("badTrips"),
+        incomePerMinute = o.getDouble("incomePerMinute"), pending = o.getInt("pending"),
         buyCost = if (o.isNull("buyCost")) null else o.getInt("buyCost"),
         upgradeCost = if (o.isNull("upgradeCost")) null else o.getInt("upgradeCost"),
-        special = if (o.isNull("special")) null else o.getString("special"),
     )
 }

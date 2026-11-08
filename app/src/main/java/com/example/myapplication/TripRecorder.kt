@@ -118,8 +118,19 @@ class TripRecorder(
             }
         }
         lastFix = Triple(lat, lng, now)
+        // 타일이 약 10m라 1초에 한 번 오는 위치 사이에서 칸을 건너뛴다. 받아들인 두 위치 사이는 직선으로 이어 채운다.
+        if (prev != null && fixes > 0) {
+            val steps = minOf(MAX_FILL_STEPS, (meters(prev.first, prev.second, lat, lng) / FILL_STEP_M).toInt())
+            for (k in 1 until steps) {
+                val f = k.toDouble() / steps
+                visit(HexGrid.tileFor(prev.first + (lat - prev.first) * f, prev.second + (lng - prev.second) * f))
+            }
+        }
         fixes++
-        val id = HexGrid.tileFor(lat, lng)
+        visit(HexGrid.tileFor(lat, lng))
+    }
+
+    private fun visit(id: String) {
         val seg = tiles.getOrPut(id) { TileSegment(id) }
         current = seg
         if (warningOn) seg.warning = true
@@ -188,6 +199,11 @@ class TripRecorder(
     }
 
     companion object {
+        /** 위치 사이를 채울 때 찍는 간격. 타일(약 10m)보다 촘촘해야 칸을 건너뛰지 않는다. */
+        private const val FILL_STEP_M = 4.0
+        /** 한 번에 채우는 최대 점 수(약 2km). 그보다 멀면 끊긴 구간으로 남긴다. */
+        private const val MAX_FILL_STEPS = 500
+
         fun meters(lat1: Double, lng1: Double, lat2: Double, lng2: Double): Double {
             val dLat = Math.toRadians(lat2 - lat1)
             val dLng = Math.toRadians(lng2 - lng1)

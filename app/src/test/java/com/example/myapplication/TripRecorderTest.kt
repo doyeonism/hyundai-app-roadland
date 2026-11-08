@@ -5,6 +5,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.math.abs
 
 class TripRecorderTest {
     private val home = 37.5446 to 127.0559
@@ -68,7 +69,26 @@ class TripRecorderTest {
         val tiles = r.finish(30_000)!!.tiles
         assertTrue(tiles[0].assisted)
         assertFalse(tiles[1].assisted)
-        assertEquals(25, TripRecorder().run { start(0); onAssist(true); onLocation(home.first, home.second, 0); onAssist(false); onLocation(far.first, far.second, 30_000); live().credits })
+        // 첫 칸만 에코·크루즈(1.5배), 나머지는 사이를 채운 칸까지 기본 크레딧.
+        val live = TripRecorder().run { start(0); onAssist(true); onLocation(home.first, home.second, 0); onAssist(false); onLocation(far.first, far.second, 30_000); live() }
+        assertEquals((Rules.TILE_CREDIT * (live.tiles + 0.5)).toInt(), live.credits)
+    }
+
+    @Test fun fillsTilesBetweenSparseFixes() {
+        val r = TripRecorder().apply { start(0) }
+        r.onLocation(home.first, home.second, 0)
+        r.onLocation(far.first, far.second, 30_000) // 약 380m를 한 번에
+        val tiles = r.finish(30_000)!!.tiles
+        assertTrue("380m면 10m 타일이 20칸은 넘는다: ${tiles.size}", tiles.size > 20)
+        assertEquals(HexGrid.tileFor(home.first, home.second), tiles.first().id)
+        assertEquals(HexGrid.tileFor(far.first, far.second), tiles.last().id)
+        // 사이에 빈 칸 없이 이어진다.
+        val axial = tiles.map { HexGrid.parse(it.id) }
+        for (i in 1 until axial.size) {
+            val dq = axial[i].first - axial[i - 1].first
+            val dr = axial[i].second - axial[i - 1].second
+            assertEquals(1, (abs(dq) + abs(dr) + abs(dq + dr)) / 2)
+        }
     }
 
     @Test fun laneChangesCountSignalsBeforeOrShortlyAfter() {
@@ -109,8 +129,13 @@ class TripRecorderTest {
         r.onLocation(far.first, far.second, 30_000)
         cruise(r)
         val ids = r.finish(30_000)!!.tiles.map { it.id }
-        val expected = listOf(home, 37.5450 to 127.0559, 37.5455 to 127.0559, far).map { HexGrid.tileFor(it.first, it.second) }.distinct()
-        assertEquals(expected, ids)
+        // 받아들인 위치는 모두 들어 있고(사이는 채워짐), 강남역·부산 타일은 없다.
+        val kept = listOf(home, 37.5450 to 127.0559, 37.5455 to 127.0559, far).map { HexGrid.tileFor(it.first, it.second) }
+        assertEquals(kept.first(), ids.first())
+        assertEquals(kept.last(), ids.last())
+        assertTrue(ids.containsAll(kept))
+        assertFalse(HexGrid.tileFor(37.4979, 127.0276) in ids)
+        assertFalse(HexGrid.tileFor(35.1796, 129.0756) in ids)
     }
 
     @Test fun tripsWithoutLocationAreDropped() {

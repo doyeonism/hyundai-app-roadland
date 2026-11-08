@@ -43,6 +43,9 @@ private fun Screen.stat(value: String, label: String, color: Int = Palette.INK) 
 
 private fun fmt(n: Int) = String.format(Locale.KOREA, "%,d", n)
 
+/** 분당 수익. 서버는 정수를 주지만 소수가 와도 깨지지 않게 한 자리까지 보여 준다. */
+private fun perMinute(n: Double) = if (n % 1.0 == 0.0) fmt(n.toInt()) else String.format(Locale.KOREA, "%,.1f", n)
+
 private fun Screen.loading(error: String?, retry: () -> Unit): View = LinearLayout(host).apply {
     orientation = LinearLayout.VERTICAL
     gravity = Gravity.CENTER
@@ -122,7 +125,7 @@ class HomeScreen(host: MainActivity) : Screen(host) {
                 addView(ui.text(fmt(h.credits), 56f, Palette.ACCENT, bold = true))
                 addView(ui.row(40).apply {
                     addView(stat("${h.ownedTiles}", "내 땅"))
-                    addView(stat("${h.incomePerHour}", "시간당 수익"))
+                    addView(stat(perMinute(h.incomePerMinute), "분당 수익"))
                     addView(stat("${h.buyableTiles}", "살 수 있는 땅"))
                 })
             })
@@ -154,7 +157,7 @@ class HomeScreen(host: MainActivity) : Screen(host) {
             }
             addView(ui.row().apply {
                 addView(ui.button("내 영토 지도") { host.navigate(TerritoryScreen(host)) }, ui.weight(1f))
-                addView(ui.button("기록·컬렉션", primary = false) { host.navigate(RecordsScreen(host)) }, ui.weight(1f))
+                addView(ui.button("기록", primary = false) { host.navigate(RecordsScreen(host)) }, ui.weight(1f))
             }, ui.matchWidth())
             val voice = Settings.voice(host)
             addView(ui.button(if (voice) "🔊 음성 안내 켜짐" else "🔈 음성 안내 꺼짐", primary = false) {
@@ -275,7 +278,11 @@ class TerritoryScreen(host: MainActivity) : Screen(host) {
             v.onSelect = { id -> selected = id; note = null; host.refresh(this) }
             // 내 땅 주변을 먼저 보여 준다. 내 땅이 없으면 지나간 길 전체.
             val owned = all.filter { it.owned }.map { it.id }
-            v.post { if (owned.isNotEmpty()) v.fit(owned, minSpan = 12f) else v.fit(all.filter { it.visited }.map { it.id }) }
+            // 타일이 약 10m라 경로 전체를 맞추면 너무 작아진다. 거리 단위로 확대한 채 가운데를 보여 준다.
+            v.post {
+                val ids = owned.ifEmpty { all.filter { it.visited }.map { it.id } }
+                v.fit(ids, minSpan = 24f, minSize = HexMapView.STREET_SIZE)
+            }
         }
         (mapView.parent as? android.view.ViewGroup)?.removeView(mapView)
         mapView.tiles = all
@@ -288,12 +295,20 @@ class TerritoryScreen(host: MainActivity) : Screen(host) {
             addView(ui.card().apply {
                 if (tile == null) {
                     addView(ui.text("지도에서 구간을 눌러 보세요", 24f))
-                    addView(ui.text("파란 테두리: 지나가서 살 수 있는 땅\n초록: 내 땅(숫자는 레벨)\n노란 점: 자주 다니는 홈 루트(수익 1.5배)\n★: 특별 구간", 20f, Palette.MUTED))
+                    addView(ui.text("파란 테두리: 지나가서 살 수 있는 땅(빈 땅 5)\n초록: 내 땅(숫자는 레벨, 최고 60)\n빨강: 다른 차의 땅(거래가 + 5에 빼앗기)\n노란 점: 자주 다니는 길", 20f, Palette.MUTED))
                 } else {
-                    addView(ui.text(tile.special?.let { "★ $it" } ?: if (tile.owned) "내 땅 · 레벨 ${tile.level}" else if (tile.visited) "지나간 빈 땅" else "아직 안 가 본 곳", 28f, bold = true))
-                    if (tile.homeRoute) addView(ui.text("🏠 홈 루트: 수익 1.5배", 20f, Palette.GOOD))
+                    val title = when {
+                        tile.owned -> "내 땅 · 레벨 ${tile.level}"
+                        tile.ownedByOther -> "다른 차의 땅"
+                        tile.visited -> "지나간 빈 땅"
+                        else -> "아직 안 가 본 곳"
+                    }
+                    addView(ui.text(title, 28f, bold = true))
+                    tile.price?.let { addView(ui.text("마지막 거래가 $it", 20f, Palette.MUTED)) }
+                    if (tile.visited) addView(ui.text("이 칸을 지난 주행: 80점 넘음 ${tile.goodTrips} · 80점 이하 ${tile.badTrips}", 20f, Palette.MUTED))
                     if (tile.owned) {
-                        addView(ui.text("시간당 ${tile.incomePerHour} 크레딧 · 쌓인 수익 ${tile.pending}", 22f))
+                        val bonus = perMinute(tile.incomePerMinute / tile.level) // 5 ± 주행 수(최소 1), 서버가 계산
+                        addView(ui.text("1분마다 ${perMinute(tile.incomePerMinute)} 크레딧 (레벨 ${tile.level} × $bonus) · 쌓인 수익 ${tile.pending}", 22f))
                         val cost = tile.upgradeCost
                         if (cost == null) addView(ui.text("최고 레벨이에요", 22f, Palette.MUTED))
                         else addView(ui.button("레벨 ${tile.level + 1}로 올리기 · $cost") { act(CarApi::upgrade, "레벨 ${tile.level + 1}이 됐어요") }
@@ -301,6 +316,11 @@ class TerritoryScreen(host: MainActivity) : Screen(host) {
                     } else {
                         val cost = tile.buyCost
                         if (cost == null) addView(ui.text("직접 지나가야 살 수 있어요", 22f, Palette.MUTED))
+                        else if (tile.ownedByOther) {
+                            addView(ui.text("빼앗으면 레벨 1부터 다시 시작해요. 낸 크레딧은 누구에게도 가지 않아요.", 20f, Palette.MUTED))
+                            addView(ui.button("빼앗기 · $cost") { act(CarApi::buy, "내 땅이 됐어요!") }
+                                .apply { isEnabled = credits >= cost; alpha = if (credits >= cost) 1f else 0.5f }, ui.matchWidth())
+                        }
                         else addView(ui.button("이 땅 사기 · $cost") { act(CarApi::buy, "내 땅이 됐어요!") }
                             .apply { isEnabled = credits >= cost; alpha = if (credits >= cost) 1f else 0.5f }, ui.matchWidth())
                     }
@@ -319,7 +339,7 @@ class TerritoryScreen(host: MainActivity) : Screen(host) {
     }
 }
 
-/** 안전 운전 연속 기록과 특별 구간 수집 현황. 지역 랭킹은 MVP 범위 밖. */
+/** 안전 운전 연속 기록과 순위. */
 class RecordsScreen(host: MainActivity) : Screen(host) {
     private var records: Records? = null
     private var ranking: Ranking? = null
@@ -338,7 +358,7 @@ class RecordsScreen(host: MainActivity) : Screen(host) {
 
     override fun build(): View {
         val rec = records ?: return loading(error) { load() }
-        val left = ui.card().apply {
+        val card = ui.card().apply {
             addView(ui.text("안전 운전 연속 기록", 20f, Palette.MUTED))
             addView(ui.row(40).apply {
                 addView(stat("${rec.safeStreak}", "지금", Palette.GOOD))
@@ -353,10 +373,6 @@ class RecordsScreen(host: MainActivity) : Screen(host) {
                 addView(ui.text("$land · $weekly", 22f, Palette.ACCENT))
             }
         }
-        val right = ui.card().apply {
-            addView(ui.text("특별 구간 수집 ${rec.specials.count { it.collected }}/${rec.specials.size}", 20f, Palette.MUTED))
-            rec.specials.forEach { addView(ui.text((if (it.collected) "✅ " else "⬜ ") + it.name, 24f, if (it.collected) Palette.INK else Palette.MUTED)) }
-        }
-        return page("기록·컬렉션", showBack = true) { addView(twoColumns(left, right)) }
+        return page("기록", showBack = true) { addView(card) }
     }
 }
