@@ -52,6 +52,7 @@ class HexMapView(context: Context) : View(context) {
     }
     private val credit = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(170, 200, 205, 215); textAlign = Paint.Align.RIGHT }
     private val tileRect = RectF()
+    private val tileSrc = android.graphics.Rect()
     private val mapTiles = MapTiles(context) { invalidate() }
 
     /**
@@ -100,7 +101,10 @@ class HexMapView(context: Context) : View(context) {
         canvas.drawText(MapTiles.ATTRIBUTION, width - 8f, height - 8f, credit)
     }
 
-    /** 지금 보이는 범위의 지도 타일을 깐다. 아직 안 받은 칸은 한 단계 위 줌 타일을 늘려 메운다. */
+    /**
+     * 지금 보이는 범위의 지도 타일을 깐다. 아직 안 받은 칸은 메모리에 있는 더 넓은 줌 타일을 늘려 메우고,
+     * 화면 바깥 둘레와 한 단계 넓은 줌은 미리 받아 둬서 끌거나 줄일 때 빈 칸이 안 보이게 한다.
+     */
     private fun drawBaseMap(canvas: Canvas) {
         if (width == 0) return
         // 화면 1px = 1/size 칸 = SIZE_M/size 메르카토르 미터. 그보다 조금 촘촘한 줌을 골라 줄여 그린다.
@@ -122,11 +126,43 @@ class HexMapView(context: Context) : View(context) {
             val wrapped = Math.floorMod(tx, n)
             val bmp = mapTiles.get(z, wrapped, ty)
             if (bmp != null) { canvas.drawBitmap(bmp, null, tileRect, tilePaint); continue }
-            // 위 줌의 같은 자리 1/4 조각으로 임시로 메운다.
-            val parent = mapTiles.get(z - 1, wrapped / 2, ty / 2) ?: continue
-            val half = parent.width / 2
-            val src = android.graphics.Rect((wrapped % 2) * half, (ty % 2) * half, (wrapped % 2) * half + half, (ty % 2) * half + half)
-            canvas.drawBitmap(parent, src, tileRect, tilePaint)
+            drawFromCoarser(canvas, z, wrapped, ty)
+        }
+        // 한 단계 넓은 줌의 같은 범위와 화면 바깥 둘레(PREFETCH_RING칸)를 미리 받는다.
+        // 미리 받기는 나중에 줄 선 것부터 받으므로, 먼 것부터 줄 세워 화면에 가까운 둘레가 먼저 오게 한다.
+        if (z > 1) {
+            val pn = n / 2
+            for (ty in (y0 - PREFETCH_RING) / 2..(y0 + rows + PREFETCH_RING) / 2) {
+                for (tx in (x0 - PREFETCH_RING) / 2..(x0 + cols + PREFETCH_RING) / 2) prefetch(z - 1, pn, tx, ty)
+            }
+        }
+        for (ring in PREFETCH_RING downTo 1) {
+            for (tx in x0 - ring..x0 + cols + ring) {
+                prefetch(z, n, tx, y0 - ring)
+                prefetch(z, n, tx, y0 + rows + ring)
+            }
+            for (ty in y0 - ring + 1 until y0 + rows + ring) {
+                prefetch(z, n, x0 - ring, ty)
+                prefetch(z, n, x0 + cols + ring, ty)
+            }
+        }
+    }
+
+    private fun prefetch(z: Int, n: Int, tx: Int, ty: Int) {
+        if (ty in 0 until n) mapTiles.prefetch(z, Math.floorMod(tx, n), ty)
+    }
+
+    /** 아직 없는 타일 자리를 메모리에 있는 더 넓은 줌 타일(최대 MAX_FALLBACK 단계 위)의 해당 조각으로 메운다. */
+    private fun drawFromCoarser(canvas: Canvas, z: Int, x: Int, y: Int) {
+        for (k in 1..minOf(MAX_FALLBACK, z)) {
+            val coarse = mapTiles.peek(z - k, x shr k, y shr k) ?: continue
+            val part = coarse.width shr k
+            if (part == 0) return
+            val sx = (x and ((1 shl k) - 1)) * part
+            val sy = (y and ((1 shl k) - 1)) * part
+            tileSrc.set(sx, sy, sx + part, sy + part)
+            canvas.drawBitmap(coarse, tileSrc, tileRect, tilePaint)
+            return
         }
     }
 
@@ -238,6 +274,10 @@ class HexMapView(context: Context) : View(context) {
         const val MAX_SIZE = 120f
         /** 영토 화면을 처음 열 때 크기. 타일 한 칸이 손가락으로 고를 만큼(약 16px, 화면 너비 약 400m). */
         const val STREET_SIZE = 16f
+        /** 화면 바깥으로 미리 받아 두는 지도 타일 둘레(칸). 256px 타일 2칸이면 손가락으로 한 번 끄는 거리쯤이다. */
+        private const val PREFETCH_RING = 2
+        /** 빈 칸을 메울 때 거슬러 올라가는 줌 단계 수. */
+        private const val MAX_FALLBACK = 4
         /** 웹 메르카토르 평면 한 변(지구 둘레, 미터). */
         const val WORLD_M = 2 * Math.PI * 6378137.0
         const val MAX_LEVEL = 60

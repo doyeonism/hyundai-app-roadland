@@ -295,7 +295,7 @@ class TerritoryScreen(host: MainActivity) : Screen(host) {
             addView(ui.card().apply {
                 if (tile == null) {
                     addView(ui.text("지도에서 구간을 눌러 보세요", 24f))
-                    addView(ui.text("파란 테두리: 지나가서 살 수 있는 땅(빈 땅 5)\n초록: 내 땅(숫자는 레벨, 최고 60)\n빨강: 다른 차의 땅(거래가 + 5에 빼앗기)\n노란 점: 자주 다니는 길", 20f, Palette.MUTED))
+                    addView(ui.text("파란 테두리: 지나가서 살 수 있는 땅(빈 땅 5)\n초록: 내 땅(숫자는 레벨, 최고 60)\n빨강: 다른 차의 땅(거래 뒤 다시 지나가면 거래가 + 5에 빼앗기)\n노란 점: 자주 다니는 길", 20f, Palette.MUTED))
                 } else {
                     val title = when {
                         tile.owned -> "내 땅 · 레벨 ${tile.level}"
@@ -315,7 +315,8 @@ class TerritoryScreen(host: MainActivity) : Screen(host) {
                             .apply { isEnabled = credits >= cost; alpha = if (credits >= cost) 1f else 0.5f }, ui.matchWidth())
                     } else {
                         val cost = tile.buyCost
-                        if (cost == null) addView(ui.text("직접 지나가야 살 수 있어요", 22f, Palette.MUTED))
+                        if (tile.mustRevisit) addView(ui.text("주인이 바뀐 뒤로 아직 안 지나갔어요. 다시 지나가면 ${(tile.price ?: 0) + 5}에 빼앗을 수 있어요", 22f, Palette.WARN))
+                        else if (cost == null) addView(ui.text("직접 지나가야 살 수 있어요", 22f, Palette.MUTED))
                         else if (tile.ownedByOther) {
                             addView(ui.text("빼앗으면 레벨 1부터 다시 시작해요. 낸 크레딧은 누구에게도 가지 않아요.", 20f, Palette.MUTED))
                             addView(ui.button("빼앗기 · $cost") { act(CarApi::buy, "내 땅이 됐어요!") }

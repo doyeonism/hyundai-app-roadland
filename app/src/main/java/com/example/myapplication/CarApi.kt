@@ -25,10 +25,11 @@ data class Home(
 
 /**
  * 땅 한 칸. 한 칸에는 주인이 하나뿐이고, 다른 차의 땅([ownedByOther])도 [buyCost]를 내면 빼앗을 수 있다.
+ * 주인이 있는 땅은 마지막 거래 뒤에 다시 지나가야 살 수 있다([mustRevisit]).
  * [price]는 마지막 거래가, [goodTrips]/[badTrips]는 내가 이 칸을 지나간 주행 중 80점을 넘은 수와 아닌 수(수익에 쓰인다).
  */
 data class LandTile(
-    val id: String, val level: Int, val owned: Boolean, val ownedByOther: Boolean, val price: Int?, val visited: Boolean,
+    val id: String, val level: Int, val owned: Boolean, val ownedByOther: Boolean, val price: Int?, val mustRevisit: Boolean, val visited: Boolean,
     val homeRoute: Boolean, val goodTrips: Int, val badTrips: Int,
     val incomePerMinute: Double, val pending: Int, val buyCost: Int?, val upgradeCost: Int?,
 )
@@ -201,6 +202,7 @@ object CarApi {
     private fun parseTile(o: JSONObject) = LandTile(
         id = o.getString("id"), level = o.getInt("level"), owned = o.getBoolean("owned"),
         ownedByOther = o.getBoolean("ownedByOther"), price = if (o.isNull("price")) null else o.getInt("price"),
+        mustRevisit = o.getBoolean("mustRevisit"),
         visited = o.getJSONArray("visitDays").length() > 0, homeRoute = o.getBoolean("homeRoute"),
         goodTrips = o.getInt("goodTrips"), badTrips = o.getInt("badTrips"),
         incomePerMinute = o.getDouble("incomePerMinute"), pending = o.getInt("pending"),

@@ -9,44 +9,65 @@ import android.util.LruCache
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
-import java.util.concurrent.Executors
+import java.util.concurrent.PriorityBlockingQueue
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * 배경 지도 타일(웹 메르카토르 z/x/y 래스터). Pleos 이미지에는 Google Play 서비스가 없어 Google Maps SDK를 못 쓰므로,
  * 타일을 직접 받아 [HexMapView]가 육각 타일 밑에 깐다. 육각 격자도 같은 메르카토르 평면이라 좌표가 그대로 맞는다.
  * 주소는 빌드 때 정한다(gradle -ProadlandTiles=..., {s}가 있으면 a~d 서브도메인). 기본은 OSM 표준 타일.
+ *
+ * 끌어서 옮길 때 빈 칸이 보이지 않게, 화면에 보이는 타일([get])을 먼저 받고 화면 바깥 둘레([prefetch])는 남는 틈에 미리 받는다.
+ * 둘 다 가장 최근에 요청한 것부터 받는다(빨리 끌고 지나간 자리는 뒤로 밀린다).
  */
 class MapTiles(context: Context, private val onLoaded: () -> Unit) {
-    private val memory = object : LruCache<String, Bitmap>(16 * 1024 * 1024) {
+    // 투명도가 없는 지도라 RGB_565로 풀어 타일 하나 128KB. 32MB면 약 250장(화면 몇 개 분량)을 들고 있는다.
+    private val memory = object : LruCache<String, Bitmap>(32 * 1024 * 1024) {
         override fun sizeOf(key: String, value: Bitmap) = value.byteCount
     }
     // 타일 주소가 바뀌면 예전 그림을 쓰지 않게 주소별로 폴더를 나눈다.
     private val dir = File(context.cacheDir, "tiles/${TEMPLATE.hashCode().toUInt()}").apply { mkdirs() }
-    private val loading = HashSet<String>()
+    private val queued = HashMap<String, Job>()
     private val failed = HashMap<String, Long>()
     private val main = Handler(Looper.getMainLooper())
 
-    /** 있으면 바로 주고, 없으면 받아 오기 시작한 뒤 null. 받으면 [onLoaded]를 부른다. */
-    fun get(z: Int, x: Int, y: Int): Bitmap? {
-        val key = "$z/$x/$y"
-        memory.get(key)?.let { return it }
+    /** 화면에 보이는 타일. 있으면 바로 주고, 없으면 먼저 받도록 줄 세운 뒤 null. 받으면 [onLoaded]를 부른다. */
+    fun get(z: Int, x: Int, y: Int): Bitmap? = memory.get(key(z, x, y)) ?: run { load(z, x, y, urgent = true); null }
+
+    /** 곧 보일 수 있는 타일. 메모리에 없으면 남는 틈에 받아 둔다. */
+    fun prefetch(z: Int, x: Int, y: Int) {
+        if (memory.get(key(z, x, y)) == null && queued.size < MAX_QUEUED) load(z, x, y, urgent = false)
+    }
+
+    /** 받아 오지 않고 메모리에 있는 것만 본다(빈 칸을 더 넓은 줌 타일로 메울 때). */
+    fun peek(z: Int, x: Int, y: Int): Bitmap? = memory.get(key(z, x, y))
+
+    private fun load(z: Int, x: Int, y: Int, urgent: Boolean) {
+        val key = key(z, x, y)
         val now = System.currentTimeMillis()
-        if (key in loading || (failed[key] ?: 0) > now) return null
-        loading += key
-        io.execute {
+        if ((failed[key] ?: 0) > now) return
+        val waiting = queued[key]
+        if (waiting != null) {
+            // 미리 받기로 줄 서 있던 타일이 화면에 들어왔으면 앞으로 당긴다.
+            if (urgent && !waiting.urgent && io.queue.remove(waiting)) queued -= key else return
+        }
+        val job = Job(urgent, seq.incrementAndGet()) {
             val bmp = runCatching { read(z, x, y) }.getOrNull()
             main.post {
-                loading -= key
+                queued -= key
                 if (bmp != null) { memory.put(key, bmp); onLoaded() } else failed[key] = now + RETRY_MS
             }
         }
-        return null
+        queued[key] = job
+        io.execute(job)
     }
 
     private fun read(z: Int, x: Int, y: Int): Bitmap? {
         val file = File(dir, "${z}_${x}_$y.png")
         if (file.exists() && System.currentTimeMillis() - file.lastModified() < MAX_AGE_MS) {
-            BitmapFactory.decodeFile(file.path)?.let { return it }
+            BitmapFactory.decodeFile(file.path, DECODE)?.let { return it }
         }
         val url = TEMPLATE.replace("{s}", "abcd"[(x + y) and 3].toString())
             .replace("{z}", "$z").replace("{x}", "$x").replace("{y}", "$y")
@@ -58,10 +79,17 @@ class MapTiles(context: Context, private val onLoaded: () -> Unit) {
             if (conn.responseCode != 200) return null
             val bytes = conn.inputStream.use { it.readBytes() }
             file.writeBytes(bytes)
-            return BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, DECODE)
         } finally {
             conn.disconnect()
         }
+    }
+
+    /** 보이는 타일이 먼저, 같은 쪽끼리는 나중에 요청한 것이 먼저. */
+    private class Job(val urgent: Boolean, val seq: Long, private val work: () -> Unit) : Runnable, Comparable<Job> {
+        override fun run() = work()
+        override fun compareTo(other: Job) =
+            if (urgent != other.urgent) (if (urgent) -1 else 1) else other.seq.compareTo(seq)
     }
 
     companion object {
@@ -70,6 +98,12 @@ class MapTiles(context: Context, private val onLoaded: () -> Unit) {
         const val MAX_ZOOM = 19
         private const val RETRY_MS = 15_000L
         private const val MAX_AGE_MS = 7 * 24 * 3_600_000L
-        private val io = Executors.newFixedThreadPool(4)
+        /** 미리 받기를 더 줄 세우지 않는 대기 수. 보이는 타일 요청은 이와 상관없이 받는다. */
+        private const val MAX_QUEUED = 48
+        private val DECODE = BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.RGB_565 }
+        private val seq = AtomicLong()
+        private val io = ThreadPoolExecutor(4, 4, 30, TimeUnit.SECONDS, PriorityBlockingQueue<Runnable>())
+
+        private fun key(z: Int, x: Int, y: Int) = "$z/$x/$y"
     }
 }
