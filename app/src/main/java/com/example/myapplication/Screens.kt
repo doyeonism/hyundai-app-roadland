@@ -43,9 +43,6 @@ private fun Screen.stat(value: String, label: String, color: Int = Palette.INK) 
 
 private fun fmt(n: Int) = String.format(Locale.KOREA, "%,d", n)
 
-/** 분당 수익. 서버는 정수를 주지만 소수가 와도 깨지지 않게 한 자리까지 보여 준다. */
-private fun perMinute(n: Double) = if (n % 1.0 == 0.0) fmt(n.toInt()) else String.format(Locale.KOREA, "%,.1f", n)
-
 private fun Screen.loading(error: String?, retry: () -> Unit): View = LinearLayout(host).apply {
     orientation = LinearLayout.VERTICAL
     gravity = Gravity.CENTER
@@ -125,7 +122,7 @@ class HomeScreen(host: MainActivity) : Screen(host) {
                 addView(ui.text(fmt(h.credits), 56f, Palette.ACCENT, bold = true))
                 addView(ui.row(40).apply {
                     addView(stat("${h.ownedTiles}", "내 땅"))
-                    addView(stat(perMinute(h.incomePerMinute), "분당 수익"))
+                    addView(stat(fmt(h.incomePerHour), "시간당 수익"))
                     addView(stat("${h.buyableTiles}", "살 수 있는 땅"))
                 })
             })
@@ -295,7 +292,7 @@ class TerritoryScreen(host: MainActivity) : Screen(host) {
             addView(ui.card().apply {
                 if (tile == null) {
                     addView(ui.text("지도에서 구간을 눌러 보세요", 24f))
-                    addView(ui.text("파란 테두리: 지나가서 살 수 있는 땅(빈 땅 5)\n초록: 내 땅(숫자는 레벨, 최고 60)\n빨강: 다른 차의 땅(거래 뒤 다시 지나가면 거래가 + 5에 빼앗기)\n노란 점: 자주 다니는 길", 20f, Palette.MUTED))
+                    addView(ui.text("파란 테두리: 지나가서 살 수 있는 땅(빈 땅은 5 × (내 땅 수 + 1))\n초록: 내 땅(숫자는 레벨, 최고 60)\n빨강: 다른 차의 땅(거래 뒤 다시 지나가면 거래가 + 5에 빼앗기)\n노란 점: 자주 다니는 길", 20f, Palette.MUTED))
                 } else {
                     val title = when {
                         tile.owned -> "내 땅 · 레벨 ${tile.level}"
@@ -307,8 +304,8 @@ class TerritoryScreen(host: MainActivity) : Screen(host) {
                     tile.price?.let { addView(ui.text("마지막 거래가 $it", 20f, Palette.MUTED)) }
                     if (tile.visited) addView(ui.text("이 칸을 지난 주행: 80점 넘음 ${tile.goodTrips} · 80점 이하 ${tile.badTrips}", 20f, Palette.MUTED))
                     if (tile.owned) {
-                        val bonus = perMinute(tile.incomePerMinute / tile.level) // 5 ± 주행 수(최소 1), 서버가 계산
-                        addView(ui.text("1분마다 ${perMinute(tile.incomePerMinute)} 크레딧 (레벨 ${tile.level} × $bonus) · 쌓인 수익 ${tile.pending}", 22f))
+                        val bonus = tile.incomePerHour / tile.level // 5 ± 주행 수(1~10), 서버가 계산
+                        addView(ui.text("1시간마다 ${fmt(tile.incomePerHour)} 크레딧 (레벨 ${tile.level} × $bonus) · 쌓인 수익 ${fmt(tile.pending)}", 22f))
                         val cost = tile.upgradeCost
                         if (cost == null) addView(ui.text("최고 레벨이에요", 22f, Palette.MUTED))
                         else addView(ui.button("레벨 ${tile.level + 1}로 올리기 · $cost") { act(CarApi::upgrade, "레벨 ${tile.level + 1}이 됐어요") }

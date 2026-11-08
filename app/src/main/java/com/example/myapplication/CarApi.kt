@@ -19,7 +19,7 @@ data class Trip(
 data class Today(val trips: Int, val km: Double, val tilesPassed: Int, val tileIds: Set<String>, val driveCredits: Int, val driveCap: Int)
 
 data class Home(
-    val credits: Int, val pendingIncome: Int, val incomePerMinute: Double, val idleCapHours: Int,
+    val credits: Int, val pendingIncome: Int, val incomePerHour: Int, val idleCapHours: Int,
     val ownedTiles: Int, val buyableTiles: Int, val today: Today, val latestTrip: Trip?, val safeStreak: Int,
 )
 
@@ -31,7 +31,7 @@ data class Home(
 data class LandTile(
     val id: String, val level: Int, val owned: Boolean, val ownedByOther: Boolean, val price: Int?, val mustRevisit: Boolean, val visited: Boolean,
     val homeRoute: Boolean, val goodTrips: Int, val badTrips: Int,
-    val incomePerMinute: Double, val pending: Int, val buyCost: Int?, val upgradeCost: Int?,
+    val incomePerHour: Int, val pending: Int, val buyCost: Int?, val upgradeCost: Int?,
 )
 
 /** 내 순위. 순위표에 없으면 null. */
@@ -172,7 +172,7 @@ object CarApi {
     private fun parseHome(o: JSONObject): Home {
         val t = o.getJSONObject("today")
         return Home(
-            credits = o.getInt("credits"), pendingIncome = o.getInt("pendingIncome"), incomePerMinute = o.getDouble("incomePerMinute"),
+            credits = o.getInt("credits"), pendingIncome = o.getInt("pendingIncome"), incomePerHour = o.getInt("incomePerHour"),
             idleCapHours = o.getInt("idleCapHours"), ownedTiles = o.getInt("ownedTiles"), buyableTiles = o.getInt("buyableTiles"),
             today = Today(
                 t.getInt("trips"), t.getDouble("km"), t.getInt("tilesPassed"),
@@ -205,7 +205,7 @@ object CarApi {
         mustRevisit = o.getBoolean("mustRevisit"),
         visited = o.getJSONArray("visitDays").length() > 0, homeRoute = o.getBoolean("homeRoute"),
         goodTrips = o.getInt("goodTrips"), badTrips = o.getInt("badTrips"),
-        incomePerMinute = o.getDouble("incomePerMinute"), pending = o.getInt("pending"),
+        incomePerHour = o.getInt("incomePerHour"), pending = o.getInt("pending"),
         buyCost = if (o.isNull("buyCost")) null else o.getInt("buyCost"),
         upgradeCost = if (o.isNull("upgradeCost")) null else o.getInt("upgradeCost"),
     )
