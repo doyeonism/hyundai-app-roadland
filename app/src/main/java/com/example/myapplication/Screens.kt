@@ -25,7 +25,7 @@ fun Screen.withSidebar(content: View): View = ui.row(0).apply {
         setBackgroundColor(Palette.CARD)
         setPadding(ui.dp(20), ui.dp(32), ui.dp(20), ui.dp(24))
         addView(ui.text("로드랜드", 28f, Palette.ACCENT, bold = true))
-        addView(ui.text("안전하게 달린 나의 영토", 16f, Palette.MUTED))
+        addView(ui.text("안전한 운전으로 넓히는 나의 영토", 16f, Palette.MUTED))
         addView(View(host), LinearLayout.LayoutParams(1, ui.dp(24)))
         fun menu(key: String, title: String, selected: Boolean) {
             addView(ui.button(title, primary = selected) { host.selectMenu(key) }.apply {
