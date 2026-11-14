@@ -41,3 +41,12 @@ Thumbs.db
 # Environment-specific settings
 .env.*
 !.env.example
+
+# Private credentials and signing exports
+.ssh/
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_ed25519
