@@ -5,12 +5,12 @@
 [Doyeonism_Roadland_release.apk 다운로드](Doyeonism_Roadland_release.apk)
 
 - 빌드일: 2026-11-15
-- 앱 소스 기준 커밋: `1eca171066c842d3ae5dbd1705c1e84b696cdcda`
+- 앱 소스: 이 APK와 함께 커밋된 로드랜드 전용 아이콘 적용본 (기반 커밋 `9c8f829`)
 - 변형: `release`, 별도 release 키 서명, debuggable 비활성
 - 앱 ID: `com.example.myapplication`
 - 버전: `1.0` / versionCode `1`
 - 크기: 20,566,008바이트
-- SHA-256: `aa40061246b5020993f63f0a1e2d5b81f4e565c45b691592a1b8cdd7437da191`
+- SHA-256: `165c95133daa7e3430cb02290f88da308b9645125a359c0ece28110297fe2b11`
 - 서명 인증서 SHA-256: `fb286666bc1d54666a60a1db3058aada01466afea80aed0b9f9f85db2a65b81b`
 - 기본 API: `https://roadland.doyeonism.com/api/roadland/v1/car`
 
