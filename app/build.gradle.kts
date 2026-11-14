@@ -11,6 +11,8 @@ android {
 
     defaultConfig {
         applicationId = "com.example.myapplication"
+        // Optional isolated package for repeatable recordings; normal builds keep the production identity.
+        providers.gradleProperty("roadlandApplicationIdSuffix").orNull?.let { applicationIdSuffix = it }
         minSdk = 28
         targetSdk = 37
         versionCode = 1
@@ -18,8 +20,8 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // 로드랜드 서버(hyundai-server). 에뮬레이터에서 10.0.2.2 는 호스트 PC. 시연 서버는 -ProadlandServer=https://... 로 바꾼다.
-        val server = providers.gradleProperty("roadlandServer").getOrElse("http://10.0.2.2:3000/api/roadland/v1/car")
+        // 배포 서버가 기본값. 로컬 개발은 -ProadlandServer=http://10.0.2.2:3000/api/roadland/v1/car 로 지정한다.
+        val server = providers.gradleProperty("roadlandServer").getOrElse("https://roadland.doyeonism.com/api/roadland/v1/car")
         buildConfigField("String", "ROADLAND_SERVER", "\"$server\"")
         // 영토 지도 배경 타일(z/x/y). 기본은 키 없이 쓸 수 있는 OSM 표준 타일인데 개발·시연용(사용 정책상 대량 사용 금지)이라,
         // 운영에서는 키가 있는 타일 서비스(VWorld, MapTiler 등) 주소로 바꾼다.

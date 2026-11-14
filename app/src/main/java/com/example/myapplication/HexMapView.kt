@@ -268,7 +268,7 @@ class HexMapView(context: Context) : View(context) {
             val (x, y) = screen(t.id)
             label.textSize = size * if (t.level >= 10) 0.45f else 0.55f
             if (size < 14) continue // 너무 작으면 글자는 생략
-            if (t.owned) canvas.drawText("${t.level}", x, y + size * 0.2f, label.apply { color = Palette.ON_ACCENT; isFakeBoldText = true })
+            // 땅별 레벨 숫자는 표시하지 않는다. 개인 레벨은 홈에서 확인한다.
             if (t.homeRoute) canvas.drawCircle(x + size * 0.45f, y - size * 0.45f, size * 0.12f, fill.apply { color = Color.rgb(255, 210, 90) })
         }
         selected?.let { drawHex(canvas, it, null, Color.WHITE, 4f) }

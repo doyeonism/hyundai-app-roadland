@@ -8,7 +8,8 @@ import android.widget.ScrollView
 import java.util.Locale
 
 object Settings {
-    private const val ONBOARDED = "onboarded"
+    @Volatile var collectionPaused = false
+    private const val ONBOARDED = "consent_2026_11_14"
     private const val VOICE = "voice"
     fun onboarded(c: Context) = TripEvents.prefs(c).getBoolean(ONBOARDED, false)
     fun finishOnboarding(c: Context) = TripEvents.prefs(c).edit().putBoolean(ONBOARDED, true).apply()
@@ -93,13 +94,21 @@ class OnboardingScreen(host: MainActivity) : Screen(host) {
         addView(ui.card().apply {
             addView(ui.label("시작하면 권한 두 개를 물어봐요"))
             addView(ui.text("📍 위치: 지나간 길을 육각형 구간으로 바꿀 때만 써요. 원래 좌표는 차 밖으로 보내지 않아요.", 20f))
+            addView(ui.text("타일과 방문 시각으로 생활 동선이 추정될 수 있어요. 주행별 타일 상세는 90일, 날짜별 방문은 최근 7일을 보관해요. 구매 자격용 방문 타일·마지막 통과 시각과 주행 요약·크레딧 원장은 데이터 삭제 전까지 보관해요.", 20f))
+            addView(ui.text("설정에서 서버와 기기에 저장된 내 데이터를 삭제할 수 있어요. 삭제하면 땅·크레딧·레벨을 복구할 수 없어요.", 20f))
             addView(ui.text("⏱️ 차량 속도(화면에는 '알 수 없는 작업'으로 보일 수 있어요): 거리와 급제동을 셀 때만 써요.", 20f))
         })
-        addView(ui.button("시작하기") {
-            Settings.finishOnboarding(host)
-            host.ensurePermissions()
-            host.replaceRoot(HomeScreen(host))
+        addView(ui.button("데이터 이용에 동의하고 시작") {
+            CarApi.consent { result ->
+                result.onSuccess {
+                    Settings.collectionPaused = false
+                    Settings.finishOnboarding(host)
+                    host.ensurePermissions()
+                    host.replaceRoot(HomeScreen(host))
+                }.onFailure { android.app.AlertDialog.Builder(host).setMessage("동의를 저장하지 못했어요. 연결을 확인한 뒤 다시 시도해 주세요.").setPositiveButton("확인", null).show() }
+            }
         }, ui.matchWidth())
+        addView(ui.button("동의하지 않고 종료", primary = false) { host.finish() }, ui.matchWidth())
     }
 }
 
@@ -110,6 +119,8 @@ class HomeScreen(host: MainActivity) : Screen(host) {
     private var note: String? = null
     private var loading = false
     private var reloadAfter = false
+    private var upgrading = false
+    private var levelNote: String? = null
     private val onTrip: (Trip) -> Unit = { load() }
 
     init {
@@ -145,6 +156,25 @@ class HomeScreen(host: MainActivity) : Screen(host) {
         }
     }
 
+    private fun upgradePersonal() {
+        val current = home ?: return
+        if (upgrading) return
+        upgrading = true
+        levelNote = null
+        host.refresh(this)
+        CarApi.upgradePersonal(current.personalLevel) { result ->
+            upgrading = false
+            result.onSuccess {
+                home = it
+                levelNote = "개인 레벨 ${it.personalLevel}! 모든 내 땅의 하루 수익이 1씩 올랐어요."
+            }.onFailure {
+                levelNote = (it as? CarApi.GameException)?.message ?: "레벨업 결과를 확인하지 못했어요. 다시 조회합니다."
+                load()
+            }
+            host.refresh(this)
+        }
+    }
+
     override fun build(): View {
         val h = home ?: return loading(error) { load() }
         val trip = h.latestTrip
@@ -158,7 +188,7 @@ class HomeScreen(host: MainActivity) : Screen(host) {
         }
         val metrics = listOf(
             metric("보유 크레딧", fmt(h.credits), "땅 구매 · 레벨 올리기에 사용", true),
-            metric("내 땅", "${fmt(h.ownedTiles)}칸", "시간당 ${fmt(h.incomePerHour)} 크레딧"),
+            metric("내 땅", "${fmt(h.ownedTiles)}칸", "하루 ${fmt(h.incomePerDay)} 크레딧"),
             metric("오늘 주행 거리", String.format(Locale.KOREA, "%.1f km", h.today.km), "${h.today.trips}회 주행 · ${fmt(h.today.tilesPassed)}구간"),
             metric("최근 안전 점수", trip?.let { "${it.safetyScore}점" } ?: "—", if (trip == null) "첫 주행 후 표시돼요" else "안전 운전 ${h.safeStreak}회 연속")
         )
@@ -215,6 +245,24 @@ class HomeScreen(host: MainActivity) : Screen(host) {
                 addView(ui.text("최신 정보를 불러오지 못했어요. 이전 조회 값을 표시합니다.", 22f, Palette.WARN))
                 addView(ui.button("새로고침", primary = false) { load() }, ui.matchWidth())
             }
+            addView(ui.card(12).apply {
+                addView(ui.text("내 레벨  Lv. ${h.personalLevel}", 40f, Palette.ACCENT, bold = true))
+                addView(ui.text("모든 내 땅: 한 칸당 하루 ${fmt(h.incomePerTilePerDay)} 크레딧", 24f))
+                h.nextIncomePerTilePerDay?.let { next ->
+                    addView(ui.text("다음 레벨: 한 칸당 ${fmt(next)} · 현재 소유지 전체 하루 +${fmt(h.ownedTiles)}", 22f, Palette.MUTED))
+                }
+                val cost = h.personalUpgradeCost
+                if (cost == null) addView(ui.text("최고 레벨이에요", 22f))
+                else {
+                    addView(ui.button(if (upgrading) "레벨업 중…" else "개인 레벨 올리기 · ${fmt(cost)} 크레딧") { upgradePersonal() }.apply {
+                        isEnabled = !upgrading && h.credits >= cost
+                        alpha = if (isEnabled) 1f else 0.5f
+                    }, ui.matchWidth())
+                    if (h.credits < cost) addView(ui.text("${fmt(cost - h.credits)} 크레딧이 더 필요해요", 20f, Palette.MUTED))
+                    addView(ui.text("레벨업 전까지 쌓인 땅 수익은 함께 정산돼요.", 18f, Palette.MUTED))
+                }
+                levelNote?.let { addView(ui.text(it, 22f, Palette.ACCENT)) }
+            }, ui.matchWidth())
             addView(overview, ui.matchWidth())
             addView(twoColumns(income, activity), ui.matchWidth())
         }
@@ -270,7 +318,7 @@ class ArrivalScreen(host: MainActivity, private val trip: Trip, private var home
             })
             addView(ui.card(6).apply {
                 addView(ui.text("+${fmt(trip.credits)} 크레딧", 40f, Palette.ACCENT, bold = true))
-                addView(ui.text("안전하게 지난 구간 ${trip.clean / Rules.TILE_CREDIT}칸  +${trip.clean}", 20f))
+                addView(ui.text("안전하게 지난 구간 ${trip.tiles.distinctBy { it.id }.count { !it.hardBrake && !it.warning }}칸  +${trip.clean}", 20f))
                 if (trip.assistBonus > 0) addView(ui.text("에코·크루즈 보너스  +${trip.assistBonus}", 20f))
                 if (trip.mannerBonus > 0) addView(ui.text("깜빡이 매너 보너스 (${trip.signaledLaneChanges}/${trip.laneChanges})  +${trip.mannerBonus}", 20f))
                 if (trip.excluded > 0) addView(ui.text("급제동 ${trip.hardBrakes}회 · 안전 경고 ${trip.warnings}회 → ${trip.excluded}칸 보상 없음", 20f, Palette.WARN))
@@ -340,12 +388,12 @@ class TerritoryScreen(host: MainActivity) : Screen(host) {
                     addView(ui.text("내 영토 찾아가기", 26f, bold = true))
                     addView(ui.text("전국 → 지역 → 주변 → 개별 땅", 22f, Palette.ACCENT))
                     addView(ui.text("소유한 땅과 내가 지나온 구간을 함께 보여줘요. 숫자를 누르면 가까이 볼 수 있어요.", 22f))
-                    addView(ui.text("라임: 내 땅 · 레벨 올리기\n파랑: 지나온 땅 · 구매 가능 여부 확인\n빨강: 다른 차량이 소유한 땅", 20f, Palette.MUTED))
+                    addView(ui.text("라임: 내 땅 · 개인 레벨 수익 적용\n파랑: 지나온 땅 · 구매 가능 여부 확인\n빨강: 다른 차량이 소유한 땅", 20f, Palette.MUTED))
                     addView(ui.text("같은 구간은 한 번만 세며, 내 땅 수와 미소유 방문 구간 수를 구분해 표시해요.", 18f, Palette.MUTED))
                     addView(ui.text("지역 표시는 가까운 땅을 묶은 것으로 행정구역 경계와는 다릅니다.", 18f, Palette.MUTED))
                 } else {
                     val title = when {
-                        tile.owned -> "내 땅 · 레벨 ${tile.level}"
+                        tile.owned -> "내 땅"
                         tile.ownedByOther -> "다른 차의 땅"
                         tile.visited -> "지나간 빈 땅"
                         else -> "아직 안 가 본 곳"
@@ -367,18 +415,16 @@ class TerritoryScreen(host: MainActivity) : Screen(host) {
                     tile.price?.let { addView(ui.label("마지막 거래가 $it")) }
                     if (tile.visited) addView(ui.text("이 칸을 지난 주행: 80점 넘음 ${tile.goodTrips} · 80점 이하 ${tile.badTrips}", 20f, Palette.MUTED))
                     if (tile.owned) {
-                        val bonus = tile.incomePerHour / tile.level.coerceAtLeast(1) // 5 ± 주행 수(1~10), 서버가 계산
-                        addView(ui.text("1시간마다 ${fmt(tile.incomePerHour)} 크레딧 (레벨 ${tile.level} × $bonus) · 쌓인 수익 ${fmt(tile.pending)}", 22f))
-                        val cost = tile.upgradeCost
-                        if (cost == null) addView(ui.text("최고 레벨이에요", 22f, Palette.MUTED))
-                        else addView(ui.button("레벨 ${tile.level + 1}로 올리기 · $cost") { act(CarApi::upgrade, "레벨 ${tile.level + 1}이 됐어요") }
-                            .apply { isEnabled = credits >= cost; alpha = if (credits >= cost) 1f else 0.5f }, ui.matchWidth())
+                        addView(ui.text("하루 ${fmt(tile.incomePerDay)} 크레딧", 28f, Palette.ACCENT, bold = true))
+                        addView(ui.text("쌓인 수익 ${fmt(tile.pending)} · 최대 24시간 적립", 20f))
+                        addView(ui.text("내 개인 레벨 ${tile.level}의 수익이 적용됩니다.", 22f))
+                        addView(ui.button("홈에서 개인 레벨 올리기", primary = false) { host.selectMenu("home") }, ui.matchWidth())
                     } else {
                         val cost = tile.buyCost
-                        if (tile.mustRevisit) addView(ui.text("주인이 바뀐 뒤로 아직 안 지나갔어요. 다시 지나가면 ${(tile.price ?: 0) + 5}에 빼앗을 수 있어요", 22f, Palette.WARN))
+                        if (tile.mustRevisit) addView(ui.text("주인이 바뀐 뒤로 아직 안 지나갔어요. 다시 지나가면 ${fmt((tile.price ?: 0) + 100)}에 빼앗을 수 있어요", 22f, Palette.WARN))
                         else if (cost == null) addView(ui.text("직접 지나가야 살 수 있어요", 22f, Palette.MUTED))
                         else if (tile.ownedByOther) {
-                            addView(ui.text("빼앗으면 레벨 1부터 다시 시작해요. 낸 크레딧은 누구에게도 가지 않아요.", 20f, Palette.MUTED))
+                            addView(ui.text("구매하면 내 개인 레벨의 수익이 적용돼요. 낸 크레딧은 누구에게도 가지 않아요.", 20f, Palette.MUTED))
                             addView(ui.button("빼앗기 · $cost") { act(CarApi::buy, "내 땅이 됐어요!") }
                                 .apply { isEnabled = credits >= cost; alpha = if (credits >= cost) 1f else 0.5f }, ui.matchWidth())
                         }
@@ -459,7 +505,7 @@ class RecordsScreen(host: MainActivity) : Screen(host) {
             addView(ui.text("안전 점수 90점 이상 주행이 이어지면 늘어나요.", 18f, Palette.MUTED))
             addView(ui.text("최근 점수  " + rec.recentScores.takeLast(7).joinToString("  "), 22f))
             ranking?.let { rk ->
-                val land = rk.landRank?.let { "땅 점수 ${it}위 (${rk.landScore})" } ?: "땅 점수 순위 없음"
+                val land = rk.landRank?.let { "보유 영토 ${it}위 (${rk.landScore})" } ?: "보유 영토 순위 없음"
                 val weekly = rk.weeklyRank?.let { "이번 주 주행 ${it}위 (${rk.weeklyCredits})" } ?: "이번 주 주행 순위 없음"
                 addView(ui.text("$land · $weekly", 22f, Palette.ACCENT))
             }
@@ -469,8 +515,37 @@ class RecordsScreen(host: MainActivity) : Screen(host) {
 }
 
 class SettingsScreen(host: MainActivity) : Screen(host) {
+    private var deleting = false
+    private fun deleteData() {
+        if (deleting) return
+        android.app.AlertDialog.Builder(host)
+            .setTitle("내 데이터 전체 삭제")
+            .setMessage("서버의 주행 기록·방문 영역·땅·크레딧·레벨과 기기의 미전송 기록을 삭제합니다. 복구할 수 없습니다.")
+            .setNegativeButton("취소", null)
+            .setPositiveButton("전체 삭제") { _, _ ->
+                deleting = true
+                Settings.collectionPaused = true
+                host.stopService(android.content.Intent(host, DriveService::class.java))
+                CarApi.deleteProfile { result ->
+                    deleting = false
+                    result.onSuccess { host.replaceRoot(OnboardingScreen(host)) }
+                        .onFailure {
+                            Settings.collectionPaused = false
+                            DriveService.start(host)
+                            android.app.AlertDialog.Builder(host).setMessage("삭제 결과를 확인하지 못했어요. 연결 후 다시 시도해 주세요.").setPositiveButton("확인", null).show()
+                        }
+                    host.refresh(this)
+                }
+            }.show()
+    }
+
     override fun build(): View = page("설정", showBack = false) {
         val voice = Settings.voice(host)
+        addView(ui.card().apply {
+            addView(ui.label("데이터 보관과 삭제"))
+            addView(ui.text("주행별 타일 상세 90일 · 날짜별 방문 7일. 구매 자격용 타일·마지막 통과 시각, 주행 요약과 원장은 삭제 전까지 보관해요.", 20f))
+            addView(ui.button(if (deleting) "삭제 중…" else "내 데이터 전체 삭제", primary = false) { deleteData() }.apply { isEnabled = !deleting }, ui.matchWidth())
+        })
         addView(ui.card().apply {
             addView(ui.text("음성 안내", 28f, bold = true))
             addView(ui.text("주차 후 도착 요약을 음성으로 알려드려요.", 22f, Palette.MUTED))

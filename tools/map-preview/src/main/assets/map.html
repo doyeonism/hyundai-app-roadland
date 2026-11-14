@@ -1,0 +1,20 @@
+<!doctype html><html lang="ko"><head><meta name="viewport" content="width=device-width,initial-scale=1">
+<link href="https://api.mapbox.com/mapbox-gl-js/v3.35.0/mapbox-gl.css" rel="stylesheet">
+<script src="https://api.mapbox.com/mapbox-gl-js/v3.35.0/mapbox-gl.js"></script>
+<style>body{margin:0;font-family:sans-serif}#map{position:absolute;inset:0}.panel{position:absolute;top:20px;left:20px;padding:18px 24px;background:#102238ed;color:white;border-radius:16px;box-shadow:0 4px 20px #0003;max-width:420px}.title{font-size:20px;font-weight:bold}#speed{font-size:34px;margin:12px 0}#status,#coords{font-size:14px;margin:8px 0}.car{font-size:36px;color:#087cff;text-shadow:0 0 4px white}button{position:absolute;right:20px;bottom:50px;background:white;border:0;border-radius:12px;padding:16px 22px;font-size:18px}</style></head>
+<body><div id="map"></div><div class="panel"><div class="title">중화역 → 강남역</div><div id="speed">GPS 대기 중</div><div id="status">도로 지도를 불러오는 중…</div><div id="coords">도로 경로 14.8km · GPS 수신 대기</div><small>도로 경로 시연 · 실시간 교통·음성 안내 없음</small></div><button onclick="follow=true;recenter()">내 위치 따라가기</button>
+<script>
+let map,marker,follow=true,position=null,lastUpdate=0;
+function recenter(){if(map&&position)map.easeTo({center:position,zoom:16,pitch:40,duration:900});}
+window.updatePosition=function(lon,lat,kph,bearing,age){lastUpdate=Date.now()-age;position=[lon,lat];if(marker){marker.setLngLat(position);if(kph>1)marker.setRotation(bearing);}if(map&&follow)recenter();document.getElementById('speed').textContent=age>10000?'GPS 갱신 대기':kph>1?'GPS 속도 · '+Math.round(kph)+' km/h':'정차 중 · 0 km/h';document.getElementById('coords').textContent=lat.toFixed(6)+', '+lon.toFixed(6);};
+setInterval(()=>{if(lastUpdate&&Date.now()-lastUpdate>10000)document.getElementById('speed').textContent='GPS 갱신 대기';},1000);
+try{
+ mapboxgl.accessToken='__MAPBOX_TOKEN__';
+ map=new mapboxgl.Map({container:'map',style:'mapbox://styles/mapbox/standard',center:[127.078366,37.602578],zoom:15,pitch:40,config:{basemap:{language:'ko'}}});
+ const car=document.createElement('div');car.className='car';car.textContent='▲';marker=new mapboxgl.Marker({element:car}).setLngLat([127.078366,37.602578]).addTo(map);
+ map.addControl(new mapboxgl.NavigationControl(),'top-right');
+ map.on('dragstart',()=>{follow=false});
+ map.on('load',()=>{map.addSource('demo-route',{type:'geojson',data:{type:'Feature',properties:{},geometry:__ROUTE_JSON__}});map.addLayer({id:'demo-route-line',type:'line',source:'demo-route',slot:'middle',layout:{'line-join':'round','line-cap':'round'},paint:{'line-color':'#087cff','line-width':7,'line-opacity':0.85}});new mapboxgl.Marker({color:'#15a46c'}).setLngLat([127.078366,37.602578]).setPopup(new mapboxgl.Popup().setText('출발 · 중화역')).addTo(map);new mapboxgl.Marker({color:'#ef4444'}).setLngLat([127.027645,37.497899]).setPopup(new mapboxgl.Popup().setText('도착 · 강남역')).addTo(map);document.getElementById('status').textContent='도로 지도 표시 완료 · 에뮬레이터 GPS 연동';console.log('MAP_PREVIEW_LOADED');if(position){marker.setLngLat(position);recenter();}});
+ map.on('error',e=>{document.getElementById('status').textContent='지도 연결 오류 · 네트워크와 토큰을 확인하세요';console.log('MAP_PREVIEW_ERROR');});
+}catch(e){document.getElementById('status').textContent='지도 초기화 실패: '+e.message;}
+</script></body></html>

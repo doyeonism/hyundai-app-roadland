@@ -52,6 +52,7 @@ class MainActivity : Activity() {
     private var ttsReady = false
     private var widgetTiles: TextView? = null
     private var widgetCredits: TextView? = null
+    private var widgetMotion: TextView? = null
     private val onWidget: (Widget?) -> Unit = { updateWidget(it) }
 
     private val gearListener = object : GearSelectionListener {
@@ -77,7 +78,7 @@ class MainActivity : Activity() {
         root = FrameLayout(this).apply { setBackgroundColor(Palette.BG) }
         setContentView(root)
         // 처음이면 온보딩에서 권한 설명을 읽은 뒤 묻는다. 그 전에도 받을 수 있는 신호(기어 등)는 모은다.
-        if (Settings.onboarded(this)) ensurePermissions() else DriveService.start(this)
+        if (Settings.onboarded(this)) ensurePermissions() else stopService(android.content.Intent(this, DriveService::class.java))
         stack.addLast(if (Settings.onboarded(this)) HomeScreen(this) else OnboardingScreen(this))
         render()
         TripEvents.listenWidget(onWidget)
@@ -187,7 +188,7 @@ class MainActivity : Activity() {
         if (target === shown) return
         shown = target
         root.removeAllViews()
-        widgetTiles = null; widgetCredits = null
+        widgetTiles = null; widgetCredits = null; widgetMotion = null
         val view = when (target) {
             is Screen -> if (target is OnboardingScreen) target.build() else target.withSidebar(target.build())
             DRIVING -> drivingWidget()
@@ -219,6 +220,11 @@ class MainActivity : Activity() {
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER
         setBackgroundColor(Palette.BG)
+        widgetMotion = ui.text("차량 속도 확인 중", 32f, Palette.INK, bold = true).apply {
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, ui.dp(24))
+        }
+        addView(widgetMotion)
         val row = ui.row(60).apply { gravity = Gravity.CENTER }
         fun number(label: String): TextView {
             val value = ui.text("0", 96f, Palette.ACCENT, bold = true).apply { gravity = Gravity.CENTER }
@@ -241,6 +247,11 @@ class MainActivity : Activity() {
 
     private fun updateWidget(w: Widget?) {
         w ?: return
+        widgetMotion?.text = when {
+            w.speedKph == null -> "차량 속도 확인 중"
+            w.speedKph < 1.0 -> "일시 정차 중 · 주행 기록 유지"
+            else -> "주행 중 · ${w.speedKph.toInt()} km/h"
+        }
         widgetTiles?.text = String.format(Locale.KOREA, "%,d", w.todayTiles)
         widgetCredits?.text = String.format(Locale.KOREA, "%,d", w.credits)
     }

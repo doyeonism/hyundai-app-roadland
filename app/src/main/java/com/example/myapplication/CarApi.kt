@@ -21,6 +21,9 @@ data class Today(val trips: Int, val km: Double, val tilesPassed: Int, val tileI
 data class Home(
     val credits: Int, val pendingIncome: Int, val incomePerHour: Int, val idleCapHours: Int,
     val ownedTiles: Int, val buyableTiles: Int, val today: Today, val latestTrip: Trip?, val safeStreak: Int,
+    val incomePerDay: Int = incomePerHour * 24,
+    val personalLevel: Int = 1, val personalUpgradeCost: Int? = null,
+    val incomePerTilePerDay: Int = 0, val nextIncomePerTilePerDay: Int? = null,
 )
 
 /**
@@ -32,6 +35,7 @@ data class LandTile(
     val id: String, val level: Int, val owned: Boolean, val ownedByOther: Boolean, val price: Int?, val mustRevisit: Boolean, val visited: Boolean,
     val homeRoute: Boolean, val goodTrips: Int, val badTrips: Int,
     val incomePerHour: Int, val pending: Int, val buyCost: Int?, val upgradeCost: Int?,
+    val incomePerDay: Int = incomePerHour * 24, val nextLevelIncomePerDay: Int? = null,
 )
 
 /** 내 순위. 순위표에 없으면 null. */
@@ -61,7 +65,30 @@ object CarApi {
         this.context = context.applicationContext
     }
 
+    fun consent(callback: (Result<Unit>) -> Unit) = async(callback) {
+        request("POST", "/privacy/consent", JSONObject().put("version", "2026-11-14"))
+        Unit
+    }
+
+    fun deleteProfile(callback: (Result<Unit>) -> Unit) = async(callback) { TripQueue.exclusive {
+        val c = context ?: error("CarApi.init 먼저")
+        // Do not auto-register a fresh account while deleting an old identity.
+        val saved = prefs().getString(TOKEN, null)
+        if (saved != null) {
+            val (code, json) = send("DELETE", "/profile", null, saved)
+            if (code != 401) unwrap(code, json)
+        }
+        TripQueue.clear(c)
+        prefs().edit().clear().commit()
+        TripEvents.publishWidget(null)
+        Unit
+    } }
+
     fun home(callback: (Result<Home>) -> Unit) = async(callback) { homeBlocking() }
+
+    fun upgradePersonal(level: Int, callback: (Result<Home>) -> Unit) = async(callback) {
+        parseHome(request("POST", "/profile/upgrade", JSONObject().put("expectedLevel", level)))
+    }
 
     fun homeBlocking() = parseHome(request("GET", "/home", null))
 
@@ -181,6 +208,11 @@ object CarApi {
             ),
             latestTrip = if (o.isNull("latestTrip")) null else parseTrip(o.getJSONObject("latestTrip")),
             safeStreak = o.getInt("safeStreak"),
+            incomePerDay = o.optInt("incomePerDay", o.getInt("incomePerHour") * 24),
+            personalLevel = o.optInt("personalLevel", 1),
+            personalUpgradeCost = if (o.isNull("personalUpgradeCost")) null else o.getInt("personalUpgradeCost"),
+            incomePerTilePerDay = o.optInt("incomePerTilePerDay", 0),
+            nextIncomePerTilePerDay = if (o.isNull("nextIncomePerTilePerDay")) null else o.getInt("nextIncomePerTilePerDay"),
         )
     }
 
@@ -208,5 +240,7 @@ object CarApi {
         incomePerHour = o.getInt("incomePerHour"), pending = o.getInt("pending"),
         buyCost = if (o.isNull("buyCost")) null else o.getInt("buyCost"),
         upgradeCost = if (o.isNull("upgradeCost")) null else o.getInt("upgradeCost"),
+        incomePerDay = o.optInt("incomePerDay", o.getInt("incomePerHour") * 24),
+        nextLevelIncomePerDay = if (o.isNull("nextLevelIncomePerDay")) null else o.getInt("nextLevelIncomePerDay"),
     )
 }

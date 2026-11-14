@@ -33,3 +33,11 @@ output-metadata.json
 *.log
 .DS_Store
 Thumbs.db
+
+# Local recordings, documents, and diagnostic scratch files
+/output/
+/.task/
+
+# Environment-specific settings
+.env.*
+!.env.example

@@ -119,6 +119,10 @@ class DriveService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (!Settings.onboarded(this)) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
         CarApi.init(this)
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel(CHANNEL, "주행 기록", NotificationManager.IMPORTANCE_MIN))
@@ -184,6 +188,7 @@ class DriveService : Service() {
 
     /** 정차 여부가 바뀌면 주행을 시작하거나 끝낸다. 기어를 아직 모르면 아무것도 하지 않는다. */
     private fun evaluate() {
+        if (Settings.collectionPaused || !Settings.onboarded(this)) return
         val gp = gearPark ?: return
         val parked = Rules.isParked(gp, parkingBrake)
         val now = System.currentTimeMillis()
@@ -217,10 +222,11 @@ class DriveService : Service() {
         if (!recorder.active) return
         val live = recorder.live()
         // 오늘 이미 지나간 타일을 다시 지나도 두 번 세지 않는다.
-        TripEvents.publishWidget(Widget((baseTiles + recorder.tileIds()).size, baseCredits + live.credits, live.safetyScore))
+        TripEvents.publishWidget(Widget((baseTiles + recorder.tileIds()).size, baseCredits + live.credits, live.safetyScore, recorder.lastKph))
     }
 
     override fun onDestroy() {
+        worker.removeCallbacksAndMessages(null)
         vehicle?.let { v ->
             runCatching { v.getGear().unregisterGearSelection(gearListener) }
             runCatching { v.getBrake().unregisterBrakePedalStatus(brakeListener) }
@@ -244,12 +250,14 @@ class DriveService : Service() {
         private const val ACTION_RECONNECT = "reconnect"
 
         fun start(context: Context) {
+            if (!Settings.onboarded(context)) return
             runCatching { context.startForegroundService(Intent(context, DriveService::class.java)) }
                 .onFailure { Log.w(TAG, "could not start collector", it) }
         }
 
         /** 권한을 새로 받은 뒤 위치 수집을 다시 연결한다. 남은 주행도 다시 보내 본다. */
         fun reconnect(context: Context) {
+            if (!Settings.onboarded(context)) return
             runCatching { context.startForegroundService(Intent(context, DriveService::class.java).setAction(ACTION_RECONNECT)) }
                 .onFailure { Log.w(TAG, "could not reconnect collector", it) }
         }

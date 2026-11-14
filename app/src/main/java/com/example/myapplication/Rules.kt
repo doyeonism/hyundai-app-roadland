@@ -1,11 +1,11 @@
 package com.example.myapplication
 
 /**
- * 차 안에서 계산하는 판정. 크레딧의 최종 값은 서버(web/lib/rules.ts)가 정하고, 여기서는 주행 중 위젯의 예상치만 낸다.
+ * 차 안에서 계산하는 판정. 크레딧의 최종 값은 연동 서버(hyundai-server)가 정하고, 여기서는 주행 중 위젯의 예상치만 낸다.
  * 타일 크레딧 값은 서버 RULES와 맞춘다.
  */
 object Rules {
-    const val TILE_CREDIT = 2
+    const val TILE_CREDIT = 40
     const val ASSIST_BONUS = 0.5
 
     /** 안전 점수: 100에서 급제동 15, 안전 경고 10, 깜빡이 없는 차선 변경 5씩 뺀다. */

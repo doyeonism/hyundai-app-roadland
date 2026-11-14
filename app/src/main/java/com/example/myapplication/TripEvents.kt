@@ -8,7 +8,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /** 주행 위젯에 보여 줄 값. 주행 시작 때 서버에서 받은 오늘 값에 이번 주행의 예상치를 더한다. */
-data class Widget(val todayTiles: Int, val credits: Int, val safetyScore: Int)
+data class Widget(val todayTiles: Int, val credits: Int, val safetyScore: Int, val speedKph: Double? = null)
 
 /**
  * 수집 서비스와 화면 사이의 소식. 같은 프로세스 안에서만 쓴다.
@@ -54,14 +54,22 @@ object TripQueue {
     private val lock = Any()
 
     fun add(context: Context, body: JSONObject) = synchronized(lock) {
+        if (Settings.collectionPaused || !Settings.onboarded(context)) return@synchronized
         val list = load(context).put(body)
         TripEvents.prefs(context).edit().putString(KEY, list.toString()).commit()
     }
+
+    fun clear(context: Context) = synchronized(lock) {
+        TripEvents.prefs(context).edit().remove(KEY).commit()
+    }
+
+    fun <T> exclusive(work: () -> T): T = synchronized(lock) { work() }
 
     fun size(context: Context) = synchronized(lock) { load(context).length() }
 
     /** 작업 스레드에서 부른다. 앞에서부터 보내고, 실패하면 그 자리에서 멈춘다. 보낸 개수를 돌려준다. */
     fun flushBlocking(context: Context): Int = synchronized(lock) {
+        if (Settings.collectionPaused || !Settings.onboarded(context)) return@synchronized 0
         var sent = 0
         while (true) {
             val list = load(context)
