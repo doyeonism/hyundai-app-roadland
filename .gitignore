@@ -18,6 +18,8 @@ keystore.properties
 
 # Build artifacts
 *.apk
+*.apk.idsig
+!/apk/*_release.apk
 *.aab
 *.ap_
 *.dex

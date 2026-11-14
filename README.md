@@ -176,11 +176,13 @@ API 34는 **실행 이미지의 버전**이고 compileSdk·targetSdk 37은 **앱
 
 ## APK 위치
 
+- 제출용 release APK: [Doyeonism_Roadland_release.apk](apk/Doyeonism_Roadland_release.apk)
+- release 빌드: `.\gradlew.bat :app:assembleRelease` (기본 산출물은 미서명이며 별도 서명 필요)
 - 기본 빌드 결과: `app/build/outputs/apk/debug/app-debug.apk`
 - 2026-11-15 로컬 배포 복사본: `output/Roadland-20261115-debug.apk`
 - [GitHub Releases](https://github.com/doyeonism/hyundai-app-roadland/releases)
 
-APK와 `output/`은 Git에서 제외됩니다. 위 로컬 복사본은 저장소를 복제해도 내려받아지지 않습니다. 이 문서 작성 시 APK의 GitHub Release 게시 여부는 확인하지 않았으며, 다운로드가 필요하면 소스 빌드 또는 실제 게시된 Release를 사용하세요. 현재 제공한 파일은 디버그 서명 APK이며 운영 배포용 서명 설정은 별도입니다.
+`apk/` 바로 아래의 `*_release.apk`만 Git 추적을 허용합니다. 그 밖의 APK와 `output/`은 제외되며 로컬 복사본은 저장소를 복제해도 내려받아지지 않습니다. 제출용 파일은 별도 release 키로 서명하며 키와 비밀번호는 저장소에 포함하지 않습니다. 기존 debug 앱과 서명이 달라 바로 덮어쓸 수 없습니다. 기존 앱 삭제 시 기기 내부 토큰과 미전송 기록이 사라질 수 있으므로 별도 테스트 기기에 설치하는 것을 권장합니다. GitHub Release 게시와 저장소의 APK 제공은 구분합니다. 상세 정보는 [APK 안내](apk/README.md)를 참고하세요.
 
 ## 오픈소스와 라이선스
 

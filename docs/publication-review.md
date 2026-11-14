@@ -30,7 +30,7 @@
 ## 배포·라이선스 확인 사항
 
 - 서버 저장소는 소유자가 확인한 `https://github.com/doyeonism/hyundai-app-roadland-server`로 반영했습니다. 비공개 저장소라면 제출 대상자의 열람 권한을 확인해야 합니다.
-- APK의 기본 빌드 위치와 로컬 복사본을 적었습니다. APK는 Git에 포함하지 않았으며 Release가 게시된 것으로 표현하지 않았습니다.
+- 2026-11-15 별도 키로 서명한 release APK를 `apk/Doyeonism_Roadland_release.apk`에 제공합니다. 이 경로의 `*_release.apk`만 Git 제외 규칙의 예외이며, 나머지 APK·서명 키·비밀번호는 계속 제외합니다. 빌드와 서명 검증 정보는 [APK 안내](../apk/README.md)에 있습니다. GitHub Release 게시와는 별개입니다.
 - 직접·전이 Android 의존성 107개 좌표, 웹 잠금 파일 패키지 454개의 메타데이터를 정리했습니다.
 - Pleos SDK·AIDL·데이터·보안 구성요소 12개 좌표는 배포 POM에 라이선스 표기가 없어 별도 공급자 약관 확인 대상으로 남겼습니다. Mapbox 3.x도 일반 MIT/BSD 오픈소스로 분류하지 않았습니다.
 - 프로젝트 자체의 재사용 라이선스는 지정하지 않았습니다. 저장소를 공개하는 것과 코드 재사용 라이선스를 부여하는 것은 별개입니다.
