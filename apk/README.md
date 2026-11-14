@@ -2,7 +2,7 @@
 
 **안전한 운전으로 넓히는 나의 영토**
 
-[Doyeonism_Roadland_release.apk 다운로드](Doyeonism_Roadland_release.apk)
+[조도연_Roadland_release.apk 다운로드](조도연_Roadland_release.apk)
 
 - 빌드일: 2026-11-15
 - 앱 소스: 이 APK와 함께 커밋된 로드랜드 전용 아이콘 적용본 (기반 커밋 `9c8f829`)
@@ -17,7 +17,7 @@
 Pleos Connect 가상 기기와 필요한 차량·위치 권한이 필요합니다. 일반 휴대전화에서 차량 기능을 재현할 수 없습니다. 환경과 권한 설정은 [프로젝트 README](../README.md)를 참고하세요.
 
 ```powershell
-adb install apk/Doyeonism_Roadland_release.apk
+adb install apk/조도연_Roadland_release.apk
 adb shell am start -n com.example.myapplication/.MainActivity
 ```
 

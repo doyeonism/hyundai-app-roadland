@@ -178,7 +178,7 @@ API 34는 **실행 이미지의 버전**이고 compileSdk·targetSdk 37은 **앱
 
 ## APK 위치
 
-- 제출용 release APK: [Doyeonism_Roadland_release.apk](apk/Doyeonism_Roadland_release.apk)
+- 제출용 release APK: [조도연_Roadland_release.apk](apk/조도연_Roadland_release.apk)
 - release 빌드: `.\gradlew.bat :app:assembleRelease` (기본 산출물은 미서명이며 별도 서명 필요)
 - 기본 빌드 결과: `app/build/outputs/apk/debug/app-debug.apk`
 - 2026-11-15 로컬 배포 복사본: `output/Roadland-20261115-debug.apk`
