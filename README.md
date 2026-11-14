@@ -1,5 +1,7 @@
 # Roadland · 로드랜드
 
+🎬 **[로드랜드 시연 영상 보기](https://drive.google.com/file/d/1Eb5vBAzz80VG9g-SDiw7ROUNeU5HCX5F/view?usp=sharing)**
+
 **안전한 운전으로 넓히는 나의 영토**
 
 로드랜드는 안전한 주행을 크레딧으로 보상하고, 방문한 지역을 나만의 영토로 가꾸는 Pleos Connect 앱입니다.
