@@ -36,8 +36,9 @@ android {
     buildTypes {
         release {
             optimization {
-                enable = true
-                packageScope = setOf("androidx.**", "kotlin.**", "kotlinx.**")
+                // Partial optimization breaks Kotlin collection access across package scopes.
+                // Keep release non-debuggable while retaining library bytecode for SDK compatibility.
+                enable = false
             }
         }
     }
